@@ -90,6 +90,12 @@
   .src { font-size: 12px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 4px 9px; color: var(--ink); cursor: pointer; font-family: inherit; }
   .src[disabled] { cursor: default; color: var(--muted); }
   .ask { display: flex; gap: 8px; margin-top: 12px; }
+  .mode { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+  .mode b { color: var(--accent); }
+  .seg.locked { opacity: .55; }
+  .coach { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+  .coach .chatlog { min-height: 0; }
+  #pickPoint.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .ask textarea { flex: 1; resize: none; padding: 11px; border-radius: 10px; border: 1px solid var(--line); font: inherit; background: var(--card); color: var(--ink); min-height: 46px; }
   .ask .btn { width: auto; padding: 0 16px; }
   .suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
@@ -149,13 +155,14 @@
   </section>
 
   <section class="card" id="resultCard" hidden>
-    <h2>Kết quả — chạm vào điểm để sửa</h2>
+    <h2 id="boardTitle">Kết quả — chạm vào điểm để sửa</h2>
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="stats">
       <span><i class="dot b"></i><b id="nb">0</b> đen</span>
       <span><i class="dot w"></i><b id="nw">0</b> trắng</span>
       <span class="muted" id="meta"></span>
     </div>
+    <div class="mode" id="modeHint"></div>
     <div class="turn">
       <span class="muted">Lượt đi tiếp theo</span>
       <div class="seg" id="turn">
@@ -163,7 +170,12 @@
         <button type="button" data-p="W">⚪ Tới Trắng</button>
       </div>
     </div>
-    <button class="btn accent" id="analyze">💡 Gợi ý nước đi (KataGo)</button>
+    <div class="row" id="playBar" hidden>
+      <button class="btn secondary" type="button" id="undo">↶ Lùi</button>
+      <button class="btn secondary" type="button" id="redo">↷ Tiến</button>
+      <button class="btn secondary" type="button" id="restart">↺ Ban đầu</button>
+    </div>
+    <button class="btn accent field" id="analyze">💡 Gợi ý nước đi cho Đen</button>
     <div id="sugg" hidden>
       <div class="wr">
         <div class="bar"><i id="wrBar"></i></div>
@@ -171,6 +183,22 @@
       </div>
       <ol class="moves" id="moves"></ol>
     </div>
+
+    <div class="coach">
+      <h2>💬 Hỏi về thế cờ này</h2>
+      <div class="suggest" id="coachSuggest">
+        <button class="src" type="button">Giải thích nước gợi ý 1</button>
+        <button class="src" type="button">Bên nào đang ưu thế, vì sao?</button>
+        <button class="src" type="button">Đánh giá cả ván, nên chơi ở đâu?</button>
+        <button class="src" type="button" id="pickPoint">📍 Chạm một điểm để hỏi</button>
+      </div>
+      <div class="chatlog" id="coachLog"></div>
+      <form class="ask" id="coachForm">
+        <textarea id="coachQ" rows="1" maxlength="1000" placeholder="Ví dụ: Nước Q16 có tốt không?"></textarea>
+        <button class="btn accent" id="coachBtn">Hỏi</button>
+      </form>
+    </div>
+
     <input id="note" class="field" type="text" placeholder="Ghi chú (tuỳ chọn)">
     <div class="row field">
       <button class="btn secondary" id="reset">Hoàn tác sửa</button>
@@ -222,6 +250,14 @@ let scan = null;      // response of /api/recognize
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
 let sugg = null;      // response of /api/analyze for the current matrix + toPlay
+// Trying moves: once suggestions were shown, tapping plays the side to move instead of editing.
+let playBase = null;  // position (as photographed + corrections) before the first tried move
+let playBaseTurn = 'B';
+let played = [];      // [{r, c, color: 1|2}] tried since playBase
+let redoStack = [];   // moves taken back with Undo, most recent last
+let koBoard = null;   // position before the last move: re-creating it is a ko violation
+let coachMarks = [];  // moves judged by the coach chat: [{row, col, loss}]
+let pickMode = false; // next tap on the board asks the coach about that point
 
 function setStatus(kind, html) {
   const s = $('status');
@@ -262,7 +298,9 @@ async function onFile(e) {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     scan = j;
     matrix = j.matrix.map(row => row.slice());
+    played = []; redoStack = []; playBase = null; koBoard = null;
     clearSugg();
+    $('coachLog').innerHTML = '';
     $('note').value = '';
     $('meta').textContent = `${j.board_size}×${j.board_size} · ${{ moku: 'Moku', ai: 'image2sgf', gbr: 'gbr' }[j.method]} · ${j.elapsed}s`;
     $('resultCard').hidden = false;
@@ -299,11 +337,19 @@ function render() {
   let nb = 0, nw = 0;
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
     const v = matrix[r][c], x = m + c * s, y = m + r * s;
-    const edited = scan.matrix[r][c] !== v;
+    const edited = scan.matrix[r][c] !== (playBase || matrix)[r][c];
     if (v === 1) { nb++; h += `<circle cx="${x}" cy="${y}" r="13.5" fill="#141414"/>`; }
     if (v === 2) { nw++; h += `<circle cx="${x}" cy="${y}" r="13.5" fill="#fafafa" stroke="#333" stroke-width=".8"/>`; }
     if (edited) h += `<rect x="${x - 15}" y="${y - 15}" width="30" height="30" fill="none" stroke="var(--accent)" stroke-width="2.5" rx="4"/>`;
     h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
+  }
+  played.forEach((p, i) => {   // number the tried moves still on the board
+    if (matrix[p.r][p.c] !== p.color || played.slice(i + 1).some(q => q.r === p.r && q.c === p.c)) return;
+    h += `<text x="${m + p.c * s}" y="${m + p.r * s + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${i + 1}</text>`;
+  });
+  for (const k of coachMarks) {
+    const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
+    h += `<rect x="${m + k.col * s - 14}" y="${m + k.row * s - 14}" width="28" height="28" rx="6" fill="none" stroke="${col}" stroke-width="3" stroke-dasharray="5 3" pointer-events="none"/>`;
   }
   if (sugg) sugg.moves.forEach((mv, i) => {
     if (mv.row === null) return;
@@ -313,35 +359,150 @@ function render() {
     h += `<text x="${x}" y="${y + 4.5}" font-size="13" font-weight="700" text-anchor="middle" fill="${toPlay === 'B' ? '#fff' : '#b4532a'}" pointer-events="none">${i + 1}</text>`;
   });
   svg.innerHTML = h;
+  updateModeUI();
   $('nb').textContent = nb; $('nw').textContent = nw;
   $('matrixText').textContent = matrix.map(r => r.join(' ')).join('\n');
 }
 
-// Tap a point: empty -> black -> white -> empty
+const NAME = { B: 'Đen', W: 'Trắng' };
+const playing = () => playBase !== null || sugg !== null;
+const pointName = (r, c) => COLS[c] + (matrix.length - r);
+const clone = m => m.map(row => row.slice());
+
+function updateModeUI() {
+  const trying = playBase !== null;
+  $('boardTitle').textContent = playing() ? 'Đi thử — chạm điểm trống để đặt quân' : 'Kết quả — chạm vào điểm để sửa';
+  $('modeHint').innerHTML = pickMode ? '📍 Chạm vào một điểm trên bàn cờ để hỏi về nước đó.'
+    : playing() ? `Chạm điểm trống để đi quân <b>${NAME[toPlay]}</b>; lượt tự đổi sau mỗi nước.`
+    : 'Chạm để sửa quân nhận dạng sai (trống → đen → trắng).';
+  $('turn').classList.toggle('locked', trying);
+  for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
+  $('playBar').hidden = !trying;
+  $('undo').disabled = !played.length;
+  $('redo').disabled = !redoStack.length;
+  if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
+}
+
+// Stones of the group at (r, c) and its number of liberties
+function group(m, r, c) {
+  const n = m.length, color = m[r][c], seen = new Set([r * n + c]), stack = [[r, c]], libs = new Set();
+  while (stack.length) {
+    const [y, x] = stack.pop();
+    for (const [dy, dx] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const yy = y + dy, xx = x + dx;
+      if (yy < 0 || xx < 0 || yy >= n || xx >= n) continue;
+      const v = m[yy][xx], k = yy * n + xx;
+      if (v === 0) libs.add(k);
+      else if (v === color && !seen.has(k)) { seen.add(k); stack.push([yy, xx]); }
+    }
+  }
+  return { stones: [...seen].map(k => [Math.floor(k / n), k % n]), libs: libs.size };
+}
+
+// Board after `color` plays (r, c), or an error message (occupied, suicide, ko)
+function playMove(m, r, c, color) {
+  if (m[r][c]) return 'Điểm này đã có quân.';
+  const next = clone(m), opp = 3 - color;
+  next[r][c] = color;
+  for (const [dy, dx] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const y = r + dy, x = c + dx;
+    if (y < 0 || x < 0 || y >= m.length || x >= m.length || next[y][x] !== opp) continue;
+    const g = group(next, y, x);
+    if (!g.libs) g.stones.forEach(([yy, xx]) => { next[yy][xx] = 0; });
+  }
+  if (!group(next, r, c).libs) return 'Nước tự sát, không được đi.';
+  if (koBoard && next.every((row, y) => row.every((v, x) => v === koBoard[y][x]))) return 'Phạm luật cướp (ko): phải đi nước khác trước.';
+  return next;
+}
+
 $('board').addEventListener('click', e => {
   const t = e.target.dataset;
   if (t.r === undefined) return;
-  matrix[t.r][t.c] = (matrix[t.r][t.c] + 1) % 3;
+  const r = +t.r, c = +t.c;
+  if (pickMode) {
+    pickMode = false;
+    $('pickPoint').classList.remove('on');
+    askCoach(`Nước ${pointName(r, c)} có tốt không? Giải thích vì sao.`);
+    render();
+    return;
+  }
+  if (playing()) {
+    const color = toPlay === 'B' ? 1 : 2;
+    const next = playMove(matrix, r, c, color);
+    if (typeof next === 'string') { setStatus('err', next); return; }
+    if (!playBase) { playBase = clone(matrix); playBaseTurn = toPlay; }
+    koBoard = matrix;
+    matrix = next;
+    played.push({ r, c, color });
+    redoStack = [];
+    toPlay = toPlay === 'B' ? 'W' : 'B';
+    setStatus('info', `${NAME[color === 1 ? 'B' : 'W']} đi ${pointName(r, c)}. Tới lượt ${NAME[toPlay]} — bấm <b>Gợi ý</b> để xem nước tốt.`);
+  } else {
+    matrix[r][c] = (matrix[r][c] + 1) % 3;
+  }
   clearSugg();
   render();
 });
 
-$('reset').addEventListener('click', () => {
-  matrix = scan.matrix.map(row => row.slice());
+function restorePhoto() {
+  if (playBase) { matrix = playBase; toPlay = playBaseTurn; }
+  played = []; redoStack = []; playBase = null; koBoard = null;
   clearSugg();
+}
+
+// Rebuild the board from playBase by replaying `played` (captures and ko state come out right)
+function replay() {
+  let board = playBase;
+  koBoard = null;   // playMove checks the ko against koBoard: rebuild it move by move
+  for (const p of played) { const prev = board; board = playMove(board, p.r, p.c, p.color); koBoard = prev; }
+  matrix = clone(board);
+  toPlay = played.length % 2 ? (playBaseTurn === 'B' ? 'W' : 'B') : playBaseTurn;
+  clearSugg();
+  render();
+}
+
+$('undo').addEventListener('click', () => {
+  if (!played.length) return;
+  const p = played.pop();
+  redoStack.push(p);
+  replay();
+  setStatus('info', `Đã lùi nước ${pointName(p.r, p.c)}. Tới lượt ${NAME[toPlay]}.`);
+});
+
+$('redo').addEventListener('click', () => {
+  if (!redoStack.length) return;
+  const p = redoStack.pop();
+  played.push(p);
+  replay();
+  setStatus('info', `Đi lại ${pointName(p.r, p.c)}. Tới lượt ${NAME[toPlay]}.`);
+});
+
+$('restart').addEventListener('click', () => {
+  restorePhoto();
+  setStatus('ok', 'Đã về thế cờ ban đầu như ảnh chụp.');
+  render();
+});
+
+$('reset').addEventListener('click', () => {
+  restorePhoto();
+  matrix = clone(scan.matrix);
   render();
 });
 
 function clearSugg() {
   sugg = null;
+  coachMarks = [];
   $('sugg').hidden = true;
 }
 
 $('turn').addEventListener('click', e => {
   const p = e.target.closest('button')?.dataset.p;
   if (!p || p === toPlay) return;
+  if (playBase) {
+    setStatus('info', 'Đang đi thử nên lượt tự đổi. Bấm <b>↺ Ban đầu</b> để chọn lại bên đi trước.');
+    return;
+  }
   toPlay = p;
-  for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === p);
   clearSugg();
   if (matrix) render();
 });
@@ -379,7 +540,7 @@ $('analyze').addEventListener('click', async () => {
     setStatus('err', 'Phân tích thất bại: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '💡 Gợi ý nước đi (KataGo)';
+    btn.textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
   }
 });
 
@@ -389,7 +550,8 @@ $('send').addEventListener('click', async () => {
   try {
     const r = await fetch('api/boards', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: scan.id, matrix, note: $('note').value || null, to_play: toPlay }),
+      body: JSON.stringify({ id: scan.id, matrix: playBase || matrix, note: $('note').value || null,
+                             to_play: playBase ? playBaseTurn : toPlay }),
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
@@ -464,44 +626,33 @@ function md(text, nSources) {
   return html;
 }
 
-function addMsg(kind, html) {
+function addMsg(kind, html, log = $('chatlog')) {
   const d = document.createElement('div');
   d.className = 'msg ' + kind;
   d.innerHTML = html;
-  $('chatlog').appendChild(d);
-  d.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  log.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   return d;
 }
 
-let viewing = null;
-function openPage(src, page) {
-  viewing = { src, page };
-  $('viewerTitle').textContent = `${src.title} — trang ${page}`;
-  $('viewerImg').src = `api/books/${src.book_id}/pages/${page}`;
-  $('viewer').hidden = false;
-}
-$('closeViewer').onclick = () => { $('viewer').hidden = true; };
-$('prevPage').onclick = () => viewing && viewing.page > 1 && openPage(viewing.src, viewing.page - 1);
-$('nextPage').onclick = () => viewing && openPage(viewing.src, viewing.page + 1);
-$('viewerImg').onerror = () => { if (viewing && viewing.page > 1) $('viewerTitle').textContent += ' (hết sách)'; };
-
-async function ask(q) {
-  q = q.trim();
-  if (!q) return;
-  $('question').value = '';
-  addMsg('q', esc(q));
-  const wait = addMsg('a', '<span class="spinner"></span>Đang tra sách…');
-  $('askBtn').disabled = true;
+// Send a question to /api/chat and render the answer (+ book sources) into `log`
+async function chatRequest(q, { log, btn, body = {}, waitText = 'Đang tra sách…' }) {
+  addMsg('q', esc(q), log);
+  const wait = addMsg('a', `<span class="spinner"></span>${waitText}`, log);
+  btn.disabled = true;
   try {
     const r = await fetch('api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Id': clientId },
-                                        body: JSON.stringify({ question: q }) });
+                                        body: JSON.stringify({ question: q, ...body }) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
     wait.innerHTML = md(j.answer, j.sources.length);
-    if (j.sources.length) {
+    // board answers mostly rest on KataGo: list only the books the answer actually cites
+    const cited = new Set([...wait.querySelectorAll('[data-cite]')].map(a => +a.dataset.cite));
+    const shown = body.board ? j.sources.filter(s => cited.has(s.n)) : j.sources;
+    if (shown.length) {
       const box = document.createElement('div');
       box.className = 'srcs';
-      j.sources.forEach(s => {
+      shown.forEach(s => {
         const b = document.createElement('button');
         b.type = 'button'; b.className = 'src';
         b.textContent = `[${s.n}] ${s.title} · ${s.page_kind === 'page' ? 'tr. ' + s.page : s.chapter}`;
@@ -516,12 +667,56 @@ async function ask(q) {
       });
     }
     $('quota').textContent = `Còn ${j.remaining_today} câu hỏi hôm nay`;
+    return j;
   } catch (err) {
     wait.innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`;
+    return null;
   } finally {
-    $('askBtn').disabled = false;
+    btn.disabled = false;
   }
 }
+
+async function ask(q) {
+  q = q.trim();
+  if (!q) return;
+  $('question').value = '';
+  await chatRequest(q, { log: $('chatlog'), btn: $('askBtn') });
+}
+
+// ---- coach: chat about the position on screen (KataGo numbers + books) ----
+async function askCoach(q) {
+  q = q.trim();
+  if (!q || !matrix) return;
+  $('coachQ').value = '';
+  const board = { matrix, to_play: toPlay };
+  if (playBase) {
+    board.base = playBase;
+    board.base_to_play = playBaseTurn;
+    board.moves = played.map(p => [p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
+  }
+  const snapshot = JSON.stringify(matrix) + toPlay;
+  const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board },
+                                   waitText: 'KataGo đang phân tích, rồi giải thích…' });
+  if (j && j.marks && JSON.stringify(matrix) + toPlay === snapshot) {   // board unchanged meanwhile
+    coachMarks = j.marks;
+    render();
+  }
+}
+$('coachForm').addEventListener('submit', e => { e.preventDefault(); askCoach($('coachQ').value); });
+$('coachQ').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askCoach($('coachQ').value); }
+});
+$('coachSuggest').addEventListener('click', e => {
+  if (!e.target.matches('button')) return;
+  if (e.target.id === 'pickPoint') {
+    pickMode = !pickMode;
+    e.target.classList.toggle('on', pickMode);
+    render();
+    if (pickMode) $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  askCoach(e.target.textContent);
+});
 $('askForm').addEventListener('submit', e => { e.preventDefault(); ask($('question').value); });
 $('question').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask($('question').value); }
