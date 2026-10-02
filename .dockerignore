@@ -1,0 +1,7 @@
+data
+.venv
+__pycache__
+katago
+books
+knownledge
+rag/probe*.py

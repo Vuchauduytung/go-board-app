@@ -1,0 +1,17 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+numpy<1.24
+opencv-python-headless<4.9
+scipy<1.12
+imutils==0.5.4
+sgfmill==1.1.1
+Pillow
+fastapi
+uvicorn
+python-multipart
+onnxruntime
+sentence-transformers>=3,<6
+qdrant-client>=1.18,<2
+google-genai>=1,<2
+redis>=5,<6
