@@ -1,0 +1,12 @@
+# KataGo on CPU (Eigen AVX2) for Cloud Run: no GPU on the free tier
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+# katago is an AppImage: extract it (no FUSE in containers)
+COPY katago-eigen /tmp/katago
+RUN cd /tmp && ./katago --appimage-extract >/dev/null && mv squashfs-root /opt/katago && rm /tmp/katago
+COPY b15.txt.gz /opt/katago/model.txt.gz
+COPY analysis-cpu.cfg /opt/katago/analysis.cfg
+COPY katago_server.py /opt/katago/
+ENV KATAGO_MAX_VISITS=200 KATAGO_MODEL=/opt/katago/model.txt.gz
+EXPOSE 8080
+CMD ["python3", "/opt/katago/katago_server.py"]
