@@ -1,0 +1,40 @@
+# Go Scan: recognition app + KataGo analysis engine (GPU)
+services:
+  app:
+    build: .
+    image: go-board-app
+    container_name: go-board-app
+    ports:
+      - "8765:8000"
+    volumes:
+      - go-board-data:/data
+      - ./books/pages:/books/pages:ro
+    environment:
+      KATAGO_URL: http://katago:8080
+      BOOK_PAGES_DIR: /books/pages
+      # chat: export these in the shell (values from cloud-bot/.env) before `docker compose up`
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      VALKEY_URL: ${VALKEY_URL:-}
+      VALKEY_TOKEN: ${VALKEY_TOKEN:-}
+    depends_on:
+      - katago
+    restart: unless-stopped
+
+  katago:
+    build: ./katago
+    image: go-board-katago
+    container_name: go-board-katago
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  go-board-data:
+    external: true
