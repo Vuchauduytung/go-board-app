@@ -155,7 +155,7 @@
   </section>
 
   <section class="card" id="resultCard" hidden>
-    <h2 id="boardTitle">Kết quả — chạm vào điểm để sửa</h2>
+    <h2>Bàn cờ — chạm điểm trống để đặt quân</h2>
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="stats">
       <span><i class="dot b"></i><b id="nb">0</b> đen</span>
@@ -170,7 +170,7 @@
         <button type="button" data-p="W">⚪ Tới Trắng</button>
       </div>
     </div>
-    <div class="row" id="playBar" hidden>
+    <div class="row" id="playBar">
       <button class="btn secondary" type="button" id="undo">↶ Lùi</button>
       <button class="btn secondary" type="button" id="redo">↷ Tiến</button>
       <button class="btn secondary" type="button" id="restart">↺ Ban đầu</button>
@@ -201,7 +201,6 @@
 
     <input id="note" class="field" type="text" placeholder="Ghi chú (tuỳ chọn)">
     <div class="row field">
-      <button class="btn secondary" id="reset">Hoàn tác sửa</button>
       <button class="btn" id="send">Gửi lên server</button>
     </div>
     <details>
@@ -250,10 +249,9 @@ let scan = null;      // response of /api/recognize
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
 let sugg = null;      // response of /api/analyze for the current matrix + toPlay
-// Trying moves: once suggestions were shown, tapping plays the side to move instead of editing.
-let playBase = null;  // position (as photographed + corrections) before the first tried move
-let playBaseTurn = 'B';
-let played = [];      // [{r, c, color: 1|2}] tried since playBase
+// Stones placed on the photographed position (scan.matrix): corrections and tried moves alike
+let played = [];      // [{r, c, color: 1|2}] in order
+let startTurn = 'B';  // colour selected when the first stone was placed
 let redoStack = [];   // moves taken back with Undo, most recent last
 let koBoard = null;   // position before the last move: re-creating it is a ko violation
 let coachMarks = [];  // moves judged by the coach chat: [{row, col, loss}]
@@ -298,14 +296,14 @@ async function onFile(e) {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     scan = j;
     matrix = j.matrix.map(row => row.slice());
-    played = []; redoStack = []; playBase = null; koBoard = null;
+    played = []; redoStack = []; koBoard = null; toPlay = 'B';
     clearSugg();
     $('coachLog').innerHTML = '';
     $('note').value = '';
     $('meta').textContent = `${j.board_size}×${j.board_size} · ${{ moku: 'Moku', ai: 'image2sgf', gbr: 'gbr' }[j.method]} · ${j.elapsed}s`;
     $('resultCard').hidden = false;
     render();
-    setStatus('ok', 'Đã nhận dạng. Kiểm tra lại với ảnh, chạm để sửa rồi bấm <b>Gửi</b>.');
+    setStatus('ok', 'Đã nhận dạng. Thiếu quân so với ảnh thì chạm điểm trống để đặt thêm; bấm <b>Gợi ý</b> để xem nước tốt.');
     $('resultCard').scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
     setStatus('err', 'Lỗi: ' + err.message);
@@ -337,10 +335,8 @@ function render() {
   let nb = 0, nw = 0;
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
     const v = matrix[r][c], x = m + c * s, y = m + r * s;
-    const edited = scan.matrix[r][c] !== (playBase || matrix)[r][c];
     if (v === 1) { nb++; h += `<circle cx="${x}" cy="${y}" r="13.5" fill="#141414"/>`; }
     if (v === 2) { nw++; h += `<circle cx="${x}" cy="${y}" r="13.5" fill="#fafafa" stroke="#333" stroke-width=".8"/>`; }
-    if (edited) h += `<rect x="${x - 15}" y="${y - 15}" width="30" height="30" fill="none" stroke="var(--accent)" stroke-width="2.5" rx="4"/>`;
     h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
   }
   played.forEach((p, i) => {   // number the tried moves still on the board
@@ -365,21 +361,16 @@ function render() {
 }
 
 const NAME = { B: 'Đen', W: 'Trắng' };
-const playing = () => playBase !== null || sugg !== null;
 const pointName = (r, c) => COLS[c] + (matrix.length - r);
 const clone = m => m.map(row => row.slice());
 
 function updateModeUI() {
-  const trying = playBase !== null;
-  $('boardTitle').textContent = playing() ? 'Đi thử — chạm điểm trống để đặt quân' : 'Kết quả — chạm vào điểm để sửa';
   $('modeHint').innerHTML = pickMode ? '📍 Chạm vào một điểm trên bàn cờ để hỏi về nước đó.'
-    : playing() ? `Chạm điểm trống để đi quân <b>${NAME[toPlay]}</b>; lượt tự đổi sau mỗi nước.`
-    : 'Chạm để sửa quân nhận dạng sai (trống → đen → trắng).';
-  $('turn').classList.toggle('locked', trying);
+    : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>↶ Lùi</b> để bỏ quân vừa đặt.`;
   for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
-  $('playBar').hidden = !trying;
   $('undo').disabled = !played.length;
   $('redo').disabled = !redoStack.length;
+  $('restart').disabled = !played.length && !redoStack.length;
   if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
 }
 
@@ -415,6 +406,8 @@ function playMove(m, r, c, color) {
   return next;
 }
 
+// Tap an empty point: place a stone of the selected colour, then the colour switches.
+// Stones are removed with Undo; the colour can be chosen any time with the Đen / Trắng buttons.
 $('board').addEventListener('click', e => {
   const t = e.target.dataset;
   if (t.r === undefined) return;
@@ -426,37 +419,26 @@ $('board').addEventListener('click', e => {
     render();
     return;
   }
-  if (playing()) {
-    const color = toPlay === 'B' ? 1 : 2;
-    const next = playMove(matrix, r, c, color);
-    if (typeof next === 'string') { setStatus('err', next); return; }
-    if (!playBase) { playBase = clone(matrix); playBaseTurn = toPlay; }
-    koBoard = matrix;
-    matrix = next;
-    played.push({ r, c, color });
-    redoStack = [];
-    toPlay = toPlay === 'B' ? 'W' : 'B';
-    setStatus('info', `${NAME[color === 1 ? 'B' : 'W']} đi ${pointName(r, c)}. Tới lượt ${NAME[toPlay]} — bấm <b>Gợi ý</b> để xem nước tốt.`);
-  } else {
-    matrix[r][c] = (matrix[r][c] + 1) % 3;
-  }
+  const color = toPlay === 'B' ? 1 : 2;
+  const next = playMove(matrix, r, c, color);
+  if (typeof next === 'string') { setStatus('err', next + (matrix[r][c] ? ' Dùng ↶ Lùi để bỏ quân vừa đặt.' : '')); return; }
+  if (!played.length) startTurn = toPlay;
+  koBoard = matrix;
+  matrix = next;
+  played.push({ r, c, color });
+  redoStack = [];
+  toPlay = toPlay === 'B' ? 'W' : 'B';
+  setStatus('info', `${NAME[color === 1 ? 'B' : 'W']} đặt ${pointName(r, c)} · tới lượt ${NAME[toPlay]}.`);
   clearSugg();
   render();
 });
 
-function restorePhoto() {
-  if (playBase) { matrix = playBase; toPlay = playBaseTurn; }
-  played = []; redoStack = []; playBase = null; koBoard = null;
-  clearSugg();
-}
-
-// Rebuild the board from playBase by replaying `played` (captures and ko state come out right)
+// Board = photographed position + the stones placed since, replayed so captures and ko come out right
 function replay() {
-  let board = playBase;
+  let board = scan.matrix;
   koBoard = null;   // playMove checks the ko against koBoard: rebuild it move by move
   for (const p of played) { const prev = board; board = playMove(board, p.r, p.c, p.color); koBoard = prev; }
   matrix = clone(board);
-  toPlay = played.length % 2 ? (playBaseTurn === 'B' ? 'W' : 'B') : playBaseTurn;
   clearSugg();
   render();
 }
@@ -465,28 +447,25 @@ $('undo').addEventListener('click', () => {
   if (!played.length) return;
   const p = played.pop();
   redoStack.push(p);
+  toPlay = p.color === 1 ? 'B' : 'W';   // the removed stone's colour plays again
   replay();
-  setStatus('info', `Đã lùi nước ${pointName(p.r, p.c)}. Tới lượt ${NAME[toPlay]}.`);
+  setStatus('info', `Đã bỏ quân ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`);
 });
 
 $('redo').addEventListener('click', () => {
   if (!redoStack.length) return;
   const p = redoStack.pop();
   played.push(p);
+  toPlay = p.color === 1 ? 'W' : 'B';
   replay();
-  setStatus('info', `Đi lại ${pointName(p.r, p.c)}. Tới lượt ${NAME[toPlay]}.`);
+  setStatus('info', `Đặt lại ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`);
 });
 
 $('restart').addEventListener('click', () => {
-  restorePhoto();
-  setStatus('ok', 'Đã về thế cờ ban đầu như ảnh chụp.');
-  render();
-});
-
-$('reset').addEventListener('click', () => {
-  restorePhoto();
-  matrix = clone(scan.matrix);
-  render();
+  if (played.length) toPlay = startTurn;
+  played = []; redoStack = [];
+  replay();
+  setStatus('ok', 'Đã về thế cờ như ảnh chụp.');
 });
 
 function clearSugg() {
@@ -498,10 +477,6 @@ function clearSugg() {
 $('turn').addEventListener('click', e => {
   const p = e.target.closest('button')?.dataset.p;
   if (!p || p === toPlay) return;
-  if (playBase) {
-    setStatus('info', 'Đang đi thử nên lượt tự đổi. Bấm <b>↺ Ban đầu</b> để chọn lại bên đi trước.');
-    return;
-  }
   toPlay = p;
   clearSugg();
   if (matrix) render();
@@ -550,8 +525,7 @@ $('send').addEventListener('click', async () => {
   try {
     const r = await fetch('api/boards', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: scan.id, matrix: playBase || matrix, note: $('note').value || null,
-                             to_play: playBase ? playBaseTurn : toPlay }),
+      body: JSON.stringify({ id: scan.id, matrix, note: $('note').value || null, to_play: toPlay }),
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
@@ -689,9 +663,9 @@ async function askCoach(q) {
   if (!q || !matrix) return;
   $('coachQ').value = '';
   const board = { matrix, to_play: toPlay };
-  if (playBase) {
-    board.base = playBase;
-    board.base_to_play = playBaseTurn;
+  if (played.length) {
+    board.base = scan.matrix;
+    board.base_to_play = startTurn;
     board.moves = played.map(p => [p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
   }
   const snapshot = JSON.stringify(matrix) + toPlay;
