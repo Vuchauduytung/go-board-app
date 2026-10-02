@@ -199,10 +199,6 @@
       </form>
     </div>
 
-    <input id="note" class="field" type="text" placeholder="Ghi chú (tuỳ chọn)">
-    <div class="row field">
-      <button class="btn" id="send">Gửi lên server</button>
-    </div>
     <details>
       <summary>Xem ma trận (0 trống, 1 đen, 2 trắng)</summary>
       <pre id="matrixText"></pre>
@@ -210,7 +206,7 @@
   </section>
 
   <section class="card">
-    <h2>Đã gửi gần đây</h2>
+    <h2>Đã lưu gần đây</h2>
     <ul class="hist" id="hist"><li class="muted">Chưa có</li></ul>
   </section>
   </div>
@@ -299,7 +295,7 @@ async function onFile(e) {
     played = []; redoStack = []; koBoard = null; toPlay = 'B';
     clearSugg();
     $('coachLog').innerHTML = '';
-    $('note').value = '';
+    lastSaved = '';
     $('meta').textContent = `${j.board_size}×${j.board_size} · ${{ moku: 'Moku', ai: 'image2sgf', gbr: 'gbr' }[j.method]} · ${j.elapsed}s`;
     $('resultCard').hidden = false;
     render();
@@ -495,6 +491,7 @@ $('analyze').addEventListener('click', async () => {
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
     sugg = j;
+    autoSave();
     // winrate / lead are for the side to move: show both sides on one bar (black fills from the left)
     const bWin = toPlay === 'B' ? j.winrate : 1 - j.winrate;
     const bLead = toPlay === 'B' ? j.score_lead : -j.score_lead;
@@ -519,24 +516,20 @@ $('analyze').addEventListener('click', async () => {
   }
 });
 
-$('send').addEventListener('click', async () => {
-  const btn = $('send');
-  btn.disabled = true;
+// The board is saved (overwriting this scan's board.json) whenever it is analysed or discussed,
+// so the history keeps the position the user actually worked on.
+let lastSaved = '';
+async function autoSave() {
+  if (!scan || !matrix) return;
+  const snap = JSON.stringify([matrix, toPlay]);
+  if (snap === lastSaved) return;
+  lastSaved = snap;
   try {
-    const r = await fetch('api/boards', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: scan.id, matrix, note: $('note').value || null, to_play: toPlay }),
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    setStatus('ok', `Đã gửi lên server ✓ (mã <b>${j.id}</b>${j.cells_fixed ? `, sửa ${j.cells_fixed} điểm` : ''})`);
-    loadHistory();
-  } catch (err) {
-    setStatus('err', 'Gửi thất bại: ' + err.message);
-  } finally {
-    btn.disabled = false;
-  }
-});
+    const r = await fetch('api/boards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ id: scan.id, matrix, to_play: toPlay }) });
+    if (r.ok) loadHistory(); else lastSaved = '';
+  } catch (e) { lastSaved = ''; }
+}
 
 async function loadHistory() {
   try {
@@ -668,6 +661,7 @@ async function askCoach(q) {
     board.base_to_play = startTurn;
     board.moves = played.map(p => [p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
   }
+  autoSave();
   const snapshot = JSON.stringify(matrix) + toPlay;
   const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board },
                                    waitText: 'KataGo đang phân tích, rồi giải thích…' });
