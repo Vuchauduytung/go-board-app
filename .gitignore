@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+
+# Large binaries: download with scripts/fetch-assets.sh
+models/*.pth
+models/*.onnx
+katago/katago
+katago/katago-eigen
+katago/*.bin.gz
+katago/*.txt.gz
+katago/README.txt
+
+# Copyrighted books, OCR output and rendered pages (see deploy/README.md)
+books/
+knownledge/
+
+# IAP OAuth client secret
+iap-oauth.yaml
