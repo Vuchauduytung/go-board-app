@@ -12,7 +12,7 @@ COPY gr/ gr/
 COPY img2sgf/ img2sgf/
 COPY static/ static/
 COPY rag/*.py rag/
-COPY app.py moku.py ./
+COPY app.py moku.py coach.py ./
 ENV DATA_DIR=/data TZ=Asia/Ho_Chi_Minh HF_HUB_OFFLINE=1
 VOLUME /data
 EXPOSE 8000

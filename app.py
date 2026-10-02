@@ -211,22 +211,40 @@ def _katago_headers():
     return h
 
 
-@app.post('/api/analyze')
-def analyze(a: AnalyzeIn):
-    n = len(a.matrix)
-    if n not in (9, 13, 19) or any(len(r) != n or any(v not in (0, 1, 2) for v in r) for r in a.matrix):
-        raise HTTPException(400, 'Ma trận không hợp lệ')
-    if a.to_play not in ('B', 'W'):
-        raise HTTPException(400, 'to_play phải là B hoặc W')
-    req = urllib.request.Request(KATAGO_URL + '/analyze', json.dumps(a.dict()).encode(), _katago_headers())
+class KataGoError(Exception):
+    def __init__(self, status, detail):
+        super().__init__(detail)
+        self.status = status
+
+
+def _katago(payload):
+    """POST a query to the KataGo service; raises KataGoError with an HTTP status for the client."""
+    req = urllib.request.Request(KATAGO_URL + '/analyze', json.dumps(payload).encode(), _katago_headers())
     try:
         with urllib.request.urlopen(req, timeout=90) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as ex:
         detail = json.loads(ex.read() or b'{}').get('error', str(ex))
-        raise HTTPException(422 if ex.code == 400 else 502, f'KataGo: {detail}')
+        raise KataGoError(422 if ex.code == 400 else 502, f'KataGo: {detail}')
     except (urllib.error.URLError, TimeoutError) as ex:
-        raise HTTPException(503, f'KataGo chưa sẵn sàng: {ex}')
+        raise KataGoError(503, f'KataGo chưa sẵn sàng: {ex}')
+
+
+def _check_board(matrix, to_play):
+    n = len(matrix)
+    if n not in (9, 13, 19) or any(len(r) != n or any(v not in (0, 1, 2) for v in r) for r in matrix):
+        raise HTTPException(400, 'Ma trận không hợp lệ')
+    if to_play not in ('B', 'W'):
+        raise HTTPException(400, 'to_play phải là B hoặc W')
+
+
+@app.post('/api/analyze')
+def analyze(a: AnalyzeIn):
+    _check_board(a.matrix, a.to_play)
+    try:
+        return _katago(a.dict())
+    except KataGoError as ex:
+        raise HTTPException(ex.status, str(ex))
 
 
 @app.get('/api/boards')
@@ -256,8 +274,17 @@ def get_image(scan_id: str):
     return FileResponse(f)
 
 
+class BoardIn2(BaseModel):
+    matrix: List[List[int]]                      # position on screen
+    to_play: str = 'B'
+    base: Optional[List[List[int]]] = None       # photographed position, before the moves tried on it
+    base_to_play: Optional[str] = None
+    moves: List[List[str]] = []                  # [["B", "Q16"], ...] tried since `base`
+
+
 class ChatIn(BaseModel):
     question: str
+    board: Optional[BoardIn2] = None   # set when asking about the position on screen
 
 
 def _chat_user(iap_email, client_id):
@@ -276,8 +303,24 @@ def chat(c: ChatIn, x_goog_authenticated_user_email: Optional[str] = Header(None
     q = c.question.strip()
     if not q or len(q) > 1000:
         raise HTTPException(400, 'Câu hỏi trống hoặc dài quá 1000 ký tự')
+    board_context, marks = None, []
+    if c.board:
+        import coach
+        b = c.board
+        _check_board(b.matrix, b.to_play)
+        if b.base is not None:
+            _check_board(b.base, b.base_to_play or 'B')
+        try:
+            board_context, marks = coach.build_context(b.matrix, b.to_play, q, _katago, base=b.base,
+                                                       base_to_play=b.base_to_play, played=b.moves[:200])
+        except KataGoError as ex:
+            log.warning('board context without KataGo: %s', ex)
+            board_context = ('THẾ CỜ HIỆN TẠI:\n' + coach.ascii_board(c.board.matrix) +
+                             f'\nTới lượt: {coach.NAMES[c.board.to_play]}. (KataGo tạm thời không phân tích được, '
+                             'hãy nói rõ là nhận xét chưa được máy kiểm chứng.)')
     try:
-        return answer(_chat_user(x_goog_authenticated_user_email, x_client_id), q)
+        res = answer(_chat_user(x_goog_authenticated_user_email, x_client_id), q, board_context)
+        return {**res, 'marks': marks}
     except QuotaExceeded as ex:
         raise HTTPException(429, str(ex))
     except Exception as ex:
@@ -286,9 +329,11 @@ def chat(c: ChatIn, x_goog_authenticated_user_email: Optional[str] = Header(None
 
 
 @app.post('/api/chat/reset')
-def chat_reset(x_goog_authenticated_user_email: Optional[str] = Header(None), x_client_id: Optional[str] = Header(None)):
+def chat_reset(board: bool = False, x_goog_authenticated_user_email: Optional[str] = Header(None),
+               x_client_id: Optional[str] = Header(None)):
     from rag.chat import clear_history
-    clear_history(_chat_user(x_goog_authenticated_user_email, x_client_id))
+    user = _chat_user(x_goog_authenticated_user_email, x_client_id)
+    clear_history(f'{user}:board' if board else user)
     return {'ok': True}
 
 
