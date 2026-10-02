@@ -1,5 +1,6 @@
 # Small HTTP wrapper around KataGo's JSON analysis engine.
-#   POST /analyze  {"matrix": [[0|1|2]], "to_play": "B"|"W", "komi"?, "rules"?, "max_visits"?, "top"?}
+#   POST /analyze  {"matrix": [[0|1|2]], "to_play": "B"|"W", "komi"?, "rules"?, "max_visits"?, "top"?,
+#                   "moves"?: [["B"|"W", "Q16"], ...] played after the position, "ownership"?: bool}
 #   GET  /health
 # Matrix: row 0 = top of the board, 0 empty, 1 black, 2 white (same as the app).
 # Uses only the standard library; one KataGo process serves all requests (it batches internally).
@@ -47,9 +48,14 @@ def to_gtp(row, col, n):
 
 
 def from_gtp(move, n):
+    """'Q16' -> (row from top, col); None for pass or anything off the board."""
     if move.lower() == 'pass':
         return None
-    return n - int(move[1:]), COLS.index(move[0].upper())
+    try:
+        r, c = n - int(move[1:]), COLS.index(move[0].upper())
+    except ValueError:
+        return None
+    return (r, c) if 0 <= r < n and 0 <= c < n else None
 
 
 def analyze(req):
@@ -59,12 +65,18 @@ def analyze(req):
         raise ValueError('board must be 9, 13 or 19 square')
     to_play = req.get('to_play', 'B').upper()
     stones = [['B' if v == 1 else 'W', to_gtp(r, c, n)] for r, row in enumerate(m) for c, v in enumerate(row) if v]
+    played = []
+    for color, mv in req.get('moves', [])[:200]:
+        if color not in ('B', 'W') or (mv.lower() != 'pass' and from_gtp(mv, n) is None):
+            raise ValueError(f'bad move {color} {mv}')
+        played.append([color, mv.upper()])
     qid = uuid.uuid4().hex
     query = {
         'id': qid,
         'initialStones': stones,
-        'moves': [],
+        'moves': played,
         'initialPlayer': to_play,
+        'includeOwnership': bool(req.get('ownership')),
         'rules': req.get('rules', 'chinese'),
         'komi': float(req.get('komi', 7.5)),
         'boardXSize': n,
@@ -98,7 +110,9 @@ def analyze(req):
             'pv': mi.get('pv', [])[:8],
         })
     root = resp.get('rootInfo', {})
+    own = resp.get('ownership')   # row-major from the top-left, side-to-move perspective
     return {
+        'ownership': [[round(own[r * n + c], 2) for c in range(n)] for r in range(n)] if own else None,
         'to_play': to_play,
         'winrate': round(root.get('winrate', 0.5), 4),
         'score_lead': round(root.get('scoreLead', 0.0), 2),
