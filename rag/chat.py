@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+import re
 import time
 from functools import lru_cache
 
@@ -28,6 +29,18 @@ Tài liệu tham khảo bên dưới là các đoạn trích từ sách cờ vâ
 hãy tóm tắt ý chính và nhắc người dùng mở trang sách được trích để xem hình.
 - Đoạn trích có thể là tiếng Anh; hãy diễn giải sang ngôn ngữ của người hỏi.
 - Nếu tài liệu không đề cập, nói rõ là sách không nói tới rồi mới trả lời theo kiến thức chung về cờ vây."""
+
+
+COACH_PROMPT = """Người dùng đang xem một thế cờ cụ thể (bàn cờ và số liệu KataGo bên dưới) và muốn bàn về nó.
+- KataGo là nguồn đánh giá chính xác nhất: dựa vào tỉ lệ thắng, điểm chênh và xếp loại nước đi của nó; không tự \
+đánh giá ngược lại KataGo. Không bịa thêm số liệu không có trong dữ liệu.
+- Giải thích bằng ý cờ dễ hiểu: mục đích của nước đi (lấy đất, tấn công, phòng thủ, chiếm điểm lớn, cắt/nối, \
+sống chết…), vì sao nước tốt nhất hơn các nước khác, và rủi ro của nước kém. Dùng chuỗi diễn biến dự kiến để minh họa.
+- Gọi nước đi bằng toạ độ (ví dụ Q16) và vị trí dễ hình dung (góc trên-phải, cạnh dưới…); hàng 19 ở trên cùng.
+- "Nước 1, 2, 3…" là thứ tự nước gợi ý KataGo hiển thị trên màn hình.
+- Khi bàn về cả ván, dùng phần vùng ảnh hưởng để nói khu nào của ai, khu nào còn tranh chấp, và nên chơi ở đâu tiếp.
+- Bàn cờ được nhận dạng từ ảnh nên có thể sai vài quân; nếu thế cờ có vẻ vô lý, nhắc người dùng kiểm tra lại.
+- Dấu [n] chỉ dùng để trích sách; không viết các ghi chú kiểu "[xem thế cờ]" hay "[xem vùng ảnh hưởng]"."""
 
 
 class QuotaExceeded(Exception):
@@ -119,9 +132,12 @@ def clear_history(user):
         log.warning('Could not clear Valkey history: %s', ex)
 
 
-def _generate(messages, context):
+def _generate(messages, context, board_context=None):
     from google.genai import types
-    system = SYSTEM_PROMPT + (f'\n\nTÀI LIỆU THAM KHẢO:\n{context}' if context else '\n\n(Không tìm thấy đoạn sách liên quan.)')
+    system = SYSTEM_PROMPT
+    if board_context:
+        system += f'\n\n{COACH_PROMPT}\n\n{board_context}'
+    system += f'\n\nTÀI LIỆU THAM KHẢO:\n{context}' if context else '\n\n(Không tìm thấy đoạn sách liên quan.)'
     resp = _gemini().models.generate_content(
         model=GEMINI_MODEL,
         contents=[types.Content(role='model' if m['role'] == 'assistant' else 'user', parts=[types.Part(text=m['content'])])
@@ -150,15 +166,20 @@ def english_query(question):
         return None
 
 
-def answer(user, question):
+def answer(user, question, board_context=None):
+    """board_context: text from coach.build_context when the question is about the board on screen;
+    that conversation keeps its own history, separate from the books tab."""
     remaining = reserve(user)
     english = english_query(question)
     chunks = search([question] + ([english] if english else []))
-    history = get_history(user)
-    reply = _generate(history + [{'role': 'user', 'content': question}], format_context(chunks))
+    session = f'{user}:board' if board_context else user
+    history = get_history(session)
+    reply = _generate(history + [{'role': 'user', 'content': question}], format_context(chunks), board_context)
+    # the model sometimes adds pseudo-references like "[xem vùng ảnh hưởng]"; only [n] cites a book
+    reply = re.sub(r'\s*\[(?:xem|see|theo)\b[^\]]*\]', '', reply, flags=re.I).strip()
     if not reply:
         reply = 'Mô hình không trả lời được, bạn thử hỏi lại nhé.'
-    save_exchange(user, question, reply)
+    save_exchange(session, question, reply)
     sources = [{'n': i, 'book_id': c.book_id, 'title': c.title, 'page': c.page, 'page_kind': c.page_kind,
                 'chapter': c.chapter, 'score': round(c.score, 3),
                 'image': f'api/books/{c.book_id}/pages/{c.page}' if c.page_kind == 'page' else None}
