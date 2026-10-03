@@ -1,0 +1,107 @@
+# Go Scan on an Oracle Cloud Always Free VM (Ampere A1, aarch64, 2 OCPU / 12 GB): app + Valkey, KataGo on Modal
+# (or on the VM's CPU with the "katago" profile), and one way in for users (COMPOSE_PROFILES in .env):
+#   duckdns     free <name>.duckdns.org: Caddy (HTTPS, ports 80/443) + oauth2-proxy (Google sign-in)
+#   cloudflare  own domain on Cloudflare: Cloudflare Tunnel + Access, no open port
+#
+#   cp deploy/oracle/.env.example deploy/oracle/.env   # then fill it in
+#   docker compose -f deploy/oracle/compose.yaml --env-file deploy/oracle/.env up -d --build
+name: go-scan
+
+services:
+  app:
+    build: ../..
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-8765}:8000"   # debugging over SSH only (ssh -L 8765:localhost:8765); users come through the proxy
+    volumes:
+      - ${DATA_PATH:-/srv/go-scan}:/data
+      - ../../books/pages:/books/pages:ro
+    environment:
+      DATA_DIR: /data/scans
+      SESSIONS_DIR: /data/sessions
+      BOOK_PAGES_DIR: /books/pages
+      VALKEY_URL: redis://valkey:6379/0
+      # trust the sign-in header of the proxy in use, and only that one
+      TRUST_FORWARDED_EMAIL: ${TRUST_FORWARDED_EMAIL:-0}
+      TRUST_CF_ACCESS: ${TRUST_CF_ACCESS:-0}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      KATAGO_URL: ${KATAGO_URL:-http://katago:8080}
+      KATAGO_AUTH: ${KATAGO_AUTH:-}
+      KATAGO_MODAL_TOKEN: ${KATAGO_MODAL_TOKEN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in deploy/oracle/.env}
+      QDRANT_URL: ${QDRANT_URL:?set QDRANT_URL in deploy/oracle/.env}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GITHUB_MODELS_TOKEN: ${GITHUB_MODELS_TOKEN:-}
+    depends_on:
+      - valkey
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru"]
+    restart: unless-stopped
+    volumes:
+      - valkey:/data
+
+  # KataGo on the VM's 2 ARM cores (slow): only when not using Modal
+  katago:
+    profiles: ["katago"]
+    build:
+      context: ../../katago
+      dockerfile: Dockerfile.src
+    restart: unless-stopped
+
+  # --- duckdns: HTTPS by Caddy (Let's Encrypt), Google sign-in by oauth2-proxy, allowed e-mails in emails.txt ---
+  caddy:
+    profiles: ["duckdns"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on:
+      - oauth2-proxy
+
+  oauth2-proxy:
+    profiles: ["duckdns"]
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    restart: unless-stopped
+    environment:
+      OAUTH2_PROXY_PROVIDER: google
+      OAUTH2_PROXY_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      OAUTH2_PROXY_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECRET: ${COOKIE_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_REDIRECT_URL: https://${DOMAIN:-}/oauth2/callback
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: /etc/oauth2-proxy/emails.txt
+      OAUTH2_PROXY_UPSTREAMS: http://app:8000
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"      # X-Forwarded-Email -> app (TRUST_FORWARDED_EMAIL=1)
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+    volumes:
+      - ./emails.txt:/etc/oauth2-proxy/emails.txt:ro
+    depends_on:
+      - app
+
+  # --- cloudflare: Tunnel to a hostname of your Cloudflare domain, users signed in by Cloudflare Access ---
+  cloudflared:
+    profiles: ["cloudflare"]
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "run"]
+    restart: unless-stopped
+    environment:
+      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:-}
+    depends_on:
+      - app
+
+volumes:
+  valkey:
+  caddy:

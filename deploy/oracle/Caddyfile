@@ -1,0 +1,12 @@
+# HTTPS for the DuckDNS name (certificate from Let's Encrypt, renewed by Caddy); everything goes through
+# oauth2-proxy, which signs users in with Google and lets only the e-mails of emails.txt through.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy oauth2-proxy:4180 {
+		# the sign-in headers come from oauth2-proxy only, never from the browser
+		header_up -X-Forwarded-Email
+		header_up -X-Forwarded-User
+		header_up -X-Forwarded-Preferred-Username
+		header_up -Cf-Access-Authenticated-User-Email
+	}
+}

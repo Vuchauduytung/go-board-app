@@ -5,8 +5,25 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
 - Nhận dạng: [Moku](https://huggingface.co/kaya-go/moku-v4) RT-DETR (mặc định, 9/13/19, AGPL-3.0), [noword/image2sgf](https://github.com/noword/image2sgf) (19x19), [skolchin/gbr](https://github.com/skolchin/gbr) (OpenCV).
 - Gợi ý nước đi: [KataGo](https://github.com/lightvector/KataGo) v1.18.2 (CUDA) + mạng `kata1-b18c384nbt`, chạy ở container `katago` (cần GPU NVIDIA), ~2.7 s/lần với 400 lượt tìm kiếm trên GTX 1650.
 - Hỏi đáp: RAG trên 11 sách cờ vây (Qdrant + multilingual-E5 + Gemini), xem `rag/`.
+- Bàn cờ luôn hiển thị: nhập ván từ nước đầu tiên trên bàn trống, hoặc chụp ảnh một thế cờ.
+- Trợ lý về thế cờ (`coach.py`): khi giải thích một nước, KataGo tính 20 lựa chọn tốt nhất / 20 lựa chọn kém nhất
+  thay cho nước đó và 10 biến tốt nhất / 10 biến kém nhất sau nước đó;
+  kết quả KataGo được cache theo thế cờ, trong session (lâu dài, chỉ người đó) và trong Valkey (7 ngày, `kgcache.py`). Khi người dùng yêu cầu ("áp dụng chuỗi đó",
+  "xoá quân D4", "quay lại nước 5"…), trợ lý trả kèm thao tác và trang web thực hiện lên bàn (có nút hoàn tác).
+- Ván cờ (`sessions.py`): mỗi người dùng giữ 10 ván gần nhất + tối đa 20 ván ghim ⭐ (admin không giới hạn), gồm
+  thế cờ, các nước đã đặt và cuộc trò chuyện, trong `SESSIONS_DIR` (mặc định `DATA_DIR/sessions`).
+- Tài khoản (`accounts.py`): tài khoản Google qua IAP; `ADMIN_EMAILS` không bị giới hạn, người dùng thường có hạn mức
+  mỗi ngày `USER_DAILY_GEMINI_TOKENS` (200.000 token) và `USER_DAILY_KATAGO` (300 lượt KataGo không lấy từ cache).
 - Lưu trữ: mỗi lượt chụp nằm trong `DATA_DIR/<id>/` gồm `image.jpg`, `recognized.json`, `board.json` (sau khi gửi).
 - Triển khai Google Cloud (Cloud Run + IAP): xem [deploy/README.md](deploy/README.md) và [infrastructure.puml](infrastructure.puml).
+- Triển khai Oracle Cloud Always Free (VM ARM 2 OCPU / 12 GB, DuckDNS + Caddy + đăng nhập Google, hoàn toàn miễn phí):
+  xem [deploy/oracle/README.md](deploy/oracle/README.md).
+- Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
+  tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi, nên chạy được cả trên Cloud Run).
+- AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → Mistral → GitHub Models → OpenRouter), xem
+  [deploy/LLM_PROVIDERS.md](deploy/LLM_PROVIDERS.md).
+- KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~21 lượt/s trên Cloud Run CPU):
+  `modal deploy katago/modal_katago.py`, rồi đặt `KATAGO_URL`, `KATAGO_AUTH=modal`, `KATAGO_MODAL_TOKEN` cho app.
 
 ## Chạy
 
@@ -31,10 +48,16 @@ Mở `http://<IP máy chủ>:8765` trên điện thoại (cùng Wi-Fi).
 |---|---|---|
 | POST | `/api/recognize` | form `file` (ảnh), `board_size` = 9/13/19, `method` = `auto`/`ai`/`gbr` → `{id, method, board_size, matrix}` |
 | POST | `/api/boards` | JSON `{id, matrix, note?, to_play?}` → lưu ma trận đã xác nhận |
-| POST | `/api/analyze` | JSON `{matrix, to_play: "B"/"W", komi?=7.5, rules?="chinese", max_visits?=400, top?=5}` → `{winrate, score_lead, moves: [{move, row, col, winrate, score_lead, visits, pv}]}` (tỉ lệ thắng/điểm tính cho bên đang tới lượt) |
+| POST | `/api/analyze` | JSON `{matrix, to_play: "B"/"W", komi?=7.5, rules?="chinese", top?=5}` (400 lượt, dùng chung cache với trợ lý) → `{winrate, score_lead, moves: [{move, row, col, winrate, score_lead, visits, pv}]}` (tỉ lệ thắng/điểm tính cho bên đang tới lượt) |
 | GET | `/api/boards` | danh sách đã gửi |
 | GET | `/api/boards/{id}` | ma trận đã lưu |
 | GET | `/api/boards/{id}/image` | ảnh gốc |
-| POST | `/api/chat` | JSON `{question}` → `{answer, sources: [{n, title, page, image}], remaining_today}` |
+| POST | `/api/chat` | JSON `{question, board?, session_id?}` → `{answer, sources: [{n, title, page, image}], marks, actions, me}`; `actions` = thao tác lên bàn khi người dùng yêu cầu |
+| POST | `/api/sgf` | form `file` (SGF) → tạo ván để review (`game` = kỷ lục ván, không đổi khi thử biến) |
+| POST | `/api/sessions/{id}/review/step` | làm thêm ~20 s review; gọi lại tới khi `status` = `done` → `mistakes: {B: [...], W: [...]}` |
+| GET | `/api/me` | người dùng, quyền admin và lượt đã dùng hôm nay |
+| GET / POST | `/api/sessions` | danh sách `{recent (10), pinned, pinned_limit}` / tạo ván `{base, scan_id?, played, to_play, start_turn, matrix}` |
+| GET / PUT / DELETE | `/api/sessions/{id}` | mở / lưu `{played, to_play, start_turn, matrix, title}` / xoá ván |
+| POST | `/api/sessions/{id}/pin` | `{pinned}`; 409 khi đã đủ số ván ghim |
 | POST | `/api/chat/reset` | xoá lịch sử hội thoại |
 | GET | `/api/books/{id}/pages/{n}` | ảnh trang sách được trích dẫn |

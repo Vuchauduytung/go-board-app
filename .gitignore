@@ -18,3 +18,12 @@ knownledge/
 
 # IAP OAuth client secret
 iap-oauth.yaml
+
+# Admin e-mails for deploy/gcp.sh
+deploy/admins.txt
+
+# Local compose settings
+.env
+
+# Allowed sign-in e-mails for the Oracle deployment
+deploy/oracle/emails.txt
