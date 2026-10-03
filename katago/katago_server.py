@@ -1,6 +1,7 @@
 # Small HTTP wrapper around KataGo's JSON analysis engine.
 #   POST /analyze  {"matrix": [[0|1|2]], "to_play": "B"|"W", "komi"?, "rules"?, "max_visits"?, "top"?,
-#                   "moves"?: [["B"|"W", "Q16"], ...] played after the position, "ownership"?: bool}
+#                   "moves"?: [["B"|"W", "Q16"], ...] played after the position, "ownership"?: bool,
+#                   "avoid"?: ["Q16", ...] moves not searched at the root, "wide_root_noise"?: float}
 #   GET  /health
 # Matrix: row 0 = top of the board, 0 empty, 1 black, 2 white (same as the app).
 # Uses only the standard library; one KataGo process serves all requests (it batches internally).
@@ -66,10 +67,12 @@ def analyze(req):
     to_play = req.get('to_play', 'B').upper()
     stones = [['B' if v == 1 else 'W', to_gtp(r, c, n)] for r, row in enumerate(m) for c, v in enumerate(row) if v]
     played = []
-    for color, mv in req.get('moves', [])[:200]:
+    for color, mv in req.get('moves', [])[:1000]:   # whole games (reviews)
         if color not in ('B', 'W') or (mv.lower() != 'pass' and from_gtp(mv, n) is None):
             raise ValueError(f'bad move {color} {mv}')
         played.append([color, mv.upper()])
+    root_player = ('W' if played[-1][0] == 'B' else 'B') if played else to_play
+    avoid = [mv.upper() for mv in req.get('avoid', [])[:n * n] if from_gtp(mv, n)]
     qid = uuid.uuid4().hex
     query = {
         'id': qid,
@@ -83,6 +86,10 @@ def analyze(req):
         'boardYSize': n,
         'maxVisits': int(min(max(req.get('max_visits', 400), 10), MAX_VISITS)),
     }
+    if avoid:   # used to get KataGo's verdict on moves beyond its favourites
+        query['avoidMoves'] = [{'player': root_player, 'moves': avoid, 'untilDepth': 1}]
+    if req.get('wide_root_noise'):   # spreads root visits over more candidate moves
+        query['overrideSettings'] = {'wideRootNoise': min(max(float(req['wide_root_noise']), 0.0), 1.0)}
     slot = [threading.Event(), None]
     pending[qid] = slot
     try:
@@ -107,7 +114,7 @@ def analyze(req):
             'winrate': round(mi['winrate'], 4),      # for the side to move
             'score_lead': round(mi['scoreLead'], 2),  # points ahead for the side to move
             'visits': mi['visits'],
-            'pv': mi.get('pv', [])[:8],
+            'pv': mi.get('pv', [])[:12],   # reviews show 10-move variations
         })
     root = resp.get('rootInfo', {})
     own = resp.get('ownership')   # row-major from the top-left, side-to-move perspective

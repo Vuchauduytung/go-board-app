@@ -1,0 +1,25 @@
+# KataGo built from source with the Eigen (CPU) backend: runs on the ARM (aarch64) Oracle VM, and on x86 too.
+FROM ubuntu:22.04 AS build
+ARG KATAGO_VERSION=v1.18.2
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates git cmake g++ make libeigen3-dev libzip-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch $KATAGO_VERSION https://github.com/lightvector/KataGo.git /src
+# AVX2 only exists on x86; NEON is used automatically by Eigen on ARM
+RUN cd /src/cpp && cmake . -DUSE_BACKEND=EIGEN -DUSE_AVX2=$([ "$(uname -m)" = x86_64 ] && echo 1 || echo 0) \
+      -DNO_GIT_REVISION=1 -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
+
+FROM ubuntu:22.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl python3 libzip4 zlib1g libgomp1 && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/cpp/katago /opt/katago/katago
+# b15c192: the strongest net that is still quick on CPU (same as the Cloud Run deployment)
+RUN curl -fsSL -o /opt/katago/model.txt.gz \
+      https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b15c192-s1672170752-d466197061.txt.gz
+COPY analysis-cpu.cfg /opt/katago/analysis.cfg
+# 2 cores on the free VM
+RUN sed -i 's/^numSearchThreadsPerAnalysisThread = .*/numSearchThreadsPerAnalysisThread = 2/' /opt/katago/analysis.cfg
+COPY katago_server.py /opt/katago/
+ENV KATAGO_BIN=/opt/katago/katago KATAGO_MODEL=/opt/katago/model.txt.gz KATAGO_CONFIG=/opt/katago/analysis.cfg \
+    KATAGO_MAX_VISITS=400
+EXPOSE 8080
+CMD ["python3", "/opt/katago/katago_server.py"]
