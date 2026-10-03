@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Download the model files and KataGo binaries that are not stored in git.
+# MODELS_ONLY=1: only the board recognition models (the Oracle ARM VM builds KataGo from source).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p models katago
@@ -13,6 +14,8 @@ if [[ ! -s models/board.pth ]]; then                                       # onl
   curl -fsSL -o "$tmp/rel.zip" https://github.com/noword/image2sgf/releases/download/v0.07/img2sgf.v0.07.zip
   unzip -q -j "$tmp/rel.zip" board.pth -d models && rm -rf "$tmp"
 fi
+
+[[ ${MODELS_ONLY:-} == 1 ]] && { echo done; exit 0; }
 
 # KataGo: CUDA build + b18 net (local GPU), Eigen AVX2 build + b15 net (Cloud Run CPU)
 NETS=https://media.katagotraining.org/uploaded/networks/models/kata1

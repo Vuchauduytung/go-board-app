@@ -7,7 +7,9 @@
 #   POST /api/boards      save confirmed matrix
 #   GET  /api/boards      list saved boards
 #   POST /api/analyze     KataGo move suggestions for a matrix (katago service, see katago/)
-#   POST /api/chat        ask the Go books assistant (RAG over books/, see rag/)
+#   POST /api/chat        ask the Go books assistant (RAG over books/, see rag/); with a board: the coach
+#   GET  /api/me          signed-in user, role and today's usage
+#   /api/sessions         the user's review sessions: list, create, load, save, pin, delete
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
 #
@@ -28,12 +30,18 @@ from typing import List, Optional
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
+import accounts
+import coach
+import kgcache
+import review
+import sessions
+from accounts import QuotaExceeded
 from img2sgf import get_board_model, get_stone_model, get_board_image, classifier_board
 from img2sgf.tools import get_board_position
 from moku import MokuDetector
@@ -110,13 +118,34 @@ def recognize_gbr(pil_img):
 app = FastAPI(title='Go board scanner')
 
 
+def current_user(x_goog_authenticated_user_email: Optional[str] = Header(None),
+                 cf_access_authenticated_user_email: Optional[str] = Header(None),
+                 x_forwarded_email: Optional[str] = Header(None),
+                 x_client_id: Optional[str] = Header(None)):
+    return accounts.identity(x_goog_authenticated_user_email, x_client_id, cf_access_authenticated_user_email,
+                             x_forwarded_email)
+
+
+def _scan_dir(user, scan_id):
+    """A photo's directory, only for the user who took it (older photos without an owner: for whoever has a
+    session on it)."""
+    d = DATA / scan_id
+    if '/' in scan_id or '..' in scan_id or not (d / 'recognized.json').is_file():
+        raise HTTPException(404, 'Không tìm thấy lượt chụp')
+    owner = json.loads((d / 'recognized.json').read_text()).get('owner')
+    if owner == user or owner is None and sessions.has_scan(user, scan_id):
+        return d
+    raise HTTPException(404, 'Không tìm thấy lượt chụp')
+
+
 @app.get('/api/health')
 def health():
     return {'status': 'ok'}
 
 
 @app.post('/api/recognize')
-def recognize(file: UploadFile = File(...), method: str = Form('auto'), board_size: int = Form(19)):
+def recognize(file: UploadFile = File(...), method: str = Form('auto'), board_size: int = Form(19),
+              user: str = Depends(current_user)):
     data = file.file.read()
     try:
         img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert('RGB')
@@ -154,7 +183,7 @@ def recognize(file: UploadFile = File(...), method: str = Form('auto'), board_si
         'matrix': matrix.tolist(),
         'elapsed': round(time.time() - t, 2),
     }
-    (d / 'recognized.json').write_text(json.dumps(result))
+    (d / 'recognized.json').write_text(json.dumps({**result, 'owner': user}))
     return result
 
 
@@ -172,13 +201,12 @@ class AnalyzeIn(BaseModel):
     rules: str = 'chinese'
     max_visits: int = 400
     top: int = 5
+    session_id: Optional[str] = None   # the KataGo answer is also indexed in this session
 
 
 @app.post('/api/boards')
-def save_board(b: BoardIn):
-    d = DATA / b.id
-    if '/' in b.id or '..' in b.id or not d.is_dir():
-        raise HTTPException(404, 'Không tìm thấy lượt chụp')
+def save_board(b: BoardIn, user: str = Depends(current_user)):
+    d = _scan_dir(user, b.id)
     n = len(b.matrix)
     if n not in (9, 13, 19) or any(len(r) != n or any(v not in (0, 1, 2) for v in r) for r in b.matrix):
         raise HTTPException(400, 'Ma trận không hợp lệ')
@@ -196,8 +224,12 @@ _katago_token = {'value': None, 'exp': 0.0}
 
 def _katago_headers():
     """On Cloud Run the KataGo service only accepts callers with an ID token for its URL
-    (KATAGO_AUTH=gcp): get one for this service's identity from the metadata server."""
+    (KATAGO_AUTH=gcp): get one for this service's identity from the metadata server.
+    KataGo on Modal (KATAGO_AUTH=modal) takes a proxy token: KATAGO_MODAL_TOKEN=wk-...:ws-..."""
     h = {'Content-Type': 'application/json'}
+    if os.environ.get('KATAGO_AUTH') == 'modal':
+        key, _, secret = os.environ['KATAGO_MODAL_TOKEN'].replace(':', '.', 1).partition('.')
+        return h | {'Modal-Key': key, 'Modal-Secret': secret}
     if os.environ.get('KATAGO_AUTH') != 'gcp':
         return h
     if time.time() > _katago_token['exp']:
@@ -221,7 +253,8 @@ def _katago(payload):
     """POST a query to the KataGo service; raises KataGoError with an HTTP status for the client."""
     req = urllib.request.Request(KATAGO_URL + '/analyze', json.dumps(payload).encode(), _katago_headers())
     try:
-        with urllib.request.urlopen(req, timeout=90) as r:
+        # a Modal GPU that scaled to zero may need a minute or more to start
+        with urllib.request.urlopen(req, timeout=150 if os.environ.get('KATAGO_AUTH') == 'modal' else 90) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as ex:
         detail = json.loads(ex.read() or b'{}').get('error', str(ex))
@@ -238,19 +271,69 @@ def _check_board(matrix, to_play):
         raise HTTPException(400, 'to_play phải là B hoặc W')
 
 
+def _katago_for(user, sid=None):
+    """KataGo for a user's request: answered from the session's cache or the shared one, otherwise searched off
+    their daily budget (in visits). With a session id, every answer is indexed in that session."""
+    def search(payload):
+        accounts.ensure(user, 'katago')
+        accounts.add(user, 'katago', int(payload.get('max_visits', 400)))
+        return _katago(payload)
+    return lambda payload: kgcache.cached(search, payload, (user, sid) if sid else None)
+
+
+def _own_session(user, sid):
+    s = sessions.get(user, sid) if sid else None
+    if sid and s is None:
+        raise HTTPException(404, 'Không tìm thấy ván này')
+    return s
+
+
+_warmed = {'at': 0.0}
+
+
+@app.post('/api/katago/warmup')
+def katago_warmup():
+    """Start a scaled-to-zero KataGo GPU (Modal) while the user sets up the board, so the first question
+    does not wait for the cold start. At most once a minute; the answer is not waited for."""
+    if os.environ.get('KATAGO_AUTH') != 'modal' or time.time() - _warmed['at'] < 60:
+        return {'started': False}
+    _warmed['at'] = time.time()
+
+    def ping():
+        req = urllib.request.Request(KATAGO_URL + '/health', headers=_katago_headers())
+        try:
+            urllib.request.urlopen(req, timeout=150).read()
+        except Exception as ex:
+            log.warning('KataGo warm-up failed: %s', ex)
+    threading.Thread(target=ping, daemon=True).start()
+    return {'started': True}
+
+
 @app.post('/api/analyze')
-def analyze(a: AnalyzeIn):
+def analyze(a: AnalyzeIn, user: str = Depends(current_user)):
     _check_board(a.matrix, a.to_play)
+    _own_session(user, a.session_id)
+    payload = {k: v for k, v in a.dict().items() if k != 'session_id'}
     try:
-        return _katago(a.dict())
+        # searched like the coach's main analysis, so both share the cached result
+        res = _katago_for(user, a.session_id)({**payload, **coach.ROOT})
     except KataGoError as ex:
         raise HTTPException(ex.status, str(ex))
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    return {**res, 'moves': res['moves'][:a.top], 'ownership': None}
 
 
 @app.get('/api/boards')
-def list_boards(limit: int = 20):
+def list_boards(limit: int = 20, user: str = Depends(current_user)):
+    """The user's own saved photos."""
     items = []
-    for f in sorted(DATA.glob('*/board.json'), reverse=True)[:limit]:
+    for f in sorted(DATA.glob('*/board.json'), reverse=True):
+        if len(items) >= limit:
+            break
+        rec = f.parent / 'recognized.json'
+        if not rec.is_file() or json.loads(rec.read_text()).get('owner') != user:
+            continue
         b = json.loads(f.read_text())
         m = np.array(b['matrix'])
         items.append({k: b.get(k) for k in ('id', 'board_size', 'saved_at', 'note', 'cells_fixed', 'to_play')}
@@ -259,19 +342,19 @@ def list_boards(limit: int = 20):
 
 
 @app.get('/api/boards/{scan_id}')
-def get_board(scan_id: str):
-    f = DATA / scan_id / 'board.json'
-    if '/' in scan_id or '..' in scan_id or not f.is_file():
+def get_board(scan_id: str, user: str = Depends(current_user)):
+    f = _scan_dir(user, scan_id) / 'board.json'
+    if not f.is_file():
         raise HTTPException(404, 'Không tìm thấy')
     return json.loads(f.read_text())
 
 
 @app.get('/api/boards/{scan_id}/image')
-def get_image(scan_id: str):
-    f = DATA / scan_id / 'image.jpg'
-    if '/' in scan_id or '..' in scan_id or not f.is_file():
+def get_image(scan_id: str, user: str = Depends(current_user)):
+    f = _scan_dir(user, scan_id) / 'image.jpg'
+    if not f.is_file():
         raise HTTPException(404, 'Không tìm thấy')
-    return FileResponse(f)
+    return FileResponse(f, headers={'Cache-Control': 'private, max-age=86400'})
 
 
 class BoardIn2(BaseModel):
@@ -280,61 +363,202 @@ class BoardIn2(BaseModel):
     base: Optional[List[List[int]]] = None       # photographed position, before the moves tried on it
     base_to_play: Optional[str] = None
     moves: List[List[str]] = []                  # [["B", "Q16"], ...] tried since `base`
+    komi: float = 7.5
 
 
 class ChatIn(BaseModel):
     question: str
     board: Optional[BoardIn2] = None   # set when asking about the position on screen
-
-
-def _chat_user(iap_email, client_id):
-    """IAP puts the signed-in Google account in a header; fall back to the browser's random id."""
-    if iap_email:
-        return iap_email.split(':')[-1]
-    if client_id and client_id.isalnum() and len(client_id) <= 64:
-        return client_id
-    return 'anonymous'
+    session_id: Optional[str] = None   # review session the board conversation belongs to
 
 
 @app.post('/api/chat')
-def chat(c: ChatIn, x_goog_authenticated_user_email: Optional[str] = Header(None),
-         x_client_id: Optional[str] = Header(None)):
-    from rag.chat import QuotaExceeded, answer
+def chat(c: ChatIn, user: str = Depends(current_user)):
+    from rag.chat import HISTORY_TURNS, answer
     q = c.question.strip()
     if not q or len(q) > 1000:
         raise HTTPException(400, 'Câu hỏi trống hoặc dài quá 1000 ký tự')
+    session = _own_session(user, c.session_id)
     board_context, marks = None, []
     if c.board:
-        import coach
         b = c.board
         _check_board(b.matrix, b.to_play)
         if b.base is not None:
             _check_board(b.base, b.base_to_play or 'B')
         try:
-            board_context, marks = coach.build_context(b.matrix, b.to_play, q, _katago, base=b.base,
-                                                       base_to_play=b.base_to_play, played=b.moves[:200])
+            board_context, marks = coach.build_context(b.matrix, b.to_play, q, _katago_for(user, c.session_id),
+                                                       base=b.base, base_to_play=b.base_to_play,
+                                                       played=b.moves[:600], komi=b.komi)
+        except QuotaExceeded as ex:
+            raise HTTPException(429, str(ex))
         except KataGoError as ex:
             log.warning('board context without KataGo: %s', ex)
             board_context = ('THẾ CỜ HIỆN TẠI:\n' + coach.ascii_board(c.board.matrix) +
                              f'\nTới lượt: {coach.NAMES[c.board.to_play]}. (KataGo tạm thời không phân tích được, '
                              'hãy nói rõ là nhận xét chưa được máy kiểm chứng.)')
+    history = sessions.history(session, HISTORY_TURNS) if session and c.board else None
     try:
-        res = answer(_chat_user(x_goog_authenticated_user_email, x_client_id), q, board_context)
-        return {**res, 'marks': marks}
+        res = answer(user, q, board_context, history)
     except QuotaExceeded as ex:
         raise HTTPException(429, str(ex))
     except Exception as ex:
         log.exception('chat failed')
         raise HTTPException(502, f'Trợ lý tạm thời lỗi: {type(ex).__name__}')
+    actions = coach.clean_actions(res['actions'], len(c.board.matrix)) if c.board else []
+    if session and c.board:
+        sessions.append_chat(user, session['id'], {'q': q, 'a': res['answer'], 'sources': res['sources'],
+                                                   'marks': marks, 'actions': actions})
+    return {**res, 'actions': actions, 'marks': marks, 'me': accounts.usage(user)}
 
 
 @app.post('/api/chat/reset')
-def chat_reset(board: bool = False, x_goog_authenticated_user_email: Optional[str] = Header(None),
-               x_client_id: Optional[str] = Header(None)):
+def chat_reset(board: bool = False, user: str = Depends(current_user)):
     from rag.chat import clear_history
-    user = _chat_user(x_goog_authenticated_user_email, x_client_id)
     clear_history(f'{user}:board' if board else user)
     return {'ok': True}
+
+
+@app.get('/api/me')
+def me(user: str = Depends(current_user)):
+    return {**accounts.usage(user), 'pinned_limit': None if accounts.is_admin(user) else sessions.PINNED_LIMIT}
+
+
+class Placed(BaseModel):
+    r: int
+    c: int
+    color: int                 # 1 black, 2 white, 0 = stone removed
+    was: Optional[int] = None  # colour of a removed stone
+
+
+class SessionIn(BaseModel):
+    base: List[List[int]]              # starting position: the photo's matrix or an empty board
+    scan_id: Optional[str] = None
+    played: List[Placed] = []
+    to_play: str = 'B'
+    start_turn: str = 'B'
+    matrix: Optional[List[List[int]]] = None   # position on screen (list thumbnails)
+    title: Optional[str] = None
+
+
+class SessionUpdate(BaseModel):
+    played: Optional[List[Placed]] = None
+    to_play: Optional[str] = None
+    start_turn: Optional[str] = None
+    matrix: Optional[List[List[int]]] = None
+    title: Optional[str] = None
+
+
+class PinIn(BaseModel):
+    pinned: bool
+
+
+def _check_session(n, fields):
+    for p in fields.get('played') or []:
+        if not (0 <= p['r'] < n and 0 <= p['c'] < n and p['color'] in (0, 1, 2)):
+            raise HTTPException(400, 'Nước đi không hợp lệ')
+    if len(fields.get('played') or []) > 2000:
+        raise HTTPException(400, 'Quá nhiều nước đi')
+    for k in ('to_play', 'start_turn'):
+        if fields.get(k) is not None and fields[k] not in ('B', 'W'):
+            raise HTTPException(400, f'{k} phải là B hoặc W')
+    if fields.get('matrix') is not None:
+        _check_board(fields['matrix'], 'B')
+        if len(fields['matrix']) != n:
+            raise HTTPException(400, 'Kích thước bàn không khớp')
+    if fields.get('title') is not None:
+        fields['title'] = fields['title'].strip()[:80] or None
+
+
+@app.get('/api/sessions')
+def list_sessions(user: str = Depends(current_user)):
+    return sessions.list_sessions(user)
+
+
+@app.post('/api/sessions')
+def create_session(s: SessionIn, user: str = Depends(current_user)):
+    _check_board(s.base, s.to_play)
+    if s.scan_id is not None and ('/' in s.scan_id or '..' in s.scan_id or not (DATA / s.scan_id).is_dir()):
+        raise HTTPException(404, 'Không tìm thấy lượt chụp')
+    fields = s.dict()
+    _check_session(len(s.base), fields)
+    return sessions.create(user, {**fields, 'board_size': len(s.base)})
+
+
+@app.get('/api/sessions/{sid}')
+def get_session(sid: str, user: str = Depends(current_user)):
+    s = sessions.get(user, sid)
+    if s is None:
+        raise HTTPException(404, 'Không tìm thấy ván này')
+    return s
+
+
+@app.put('/api/sessions/{sid}')
+def save_session(sid: str, u: SessionUpdate, user: str = Depends(current_user)):
+    s = sessions.get(user, sid)
+    if s is None:
+        raise HTTPException(404, 'Không tìm thấy ván này')
+    fields = {k: v for k, v in u.dict().items() if v is not None}
+    _check_session(s['board_size'], fields)
+    s = sessions.update(user, sid, fields)
+    return sessions.summary(s)
+
+
+@app.post('/api/sessions/{sid}/pin')
+def pin_session(sid: str, p: PinIn, user: str = Depends(current_user)):
+    try:
+        s = sessions.set_pinned(user, sid, p.pinned)
+    except sessions.LimitReached as ex:
+        raise HTTPException(409, str(ex))
+    if s is None:
+        raise HTTPException(404, 'Không tìm thấy ván này')
+    return sessions.summary(s)
+
+
+@app.delete('/api/sessions/{sid}')
+def delete_session(sid: str, user: str = Depends(current_user)):
+    if not sessions.delete(user, sid):
+        raise HTTPException(404, 'Không tìm thấy ván này')
+    return {'ok': True}
+
+
+@app.post('/api/sgf')
+def import_sgf(file: UploadFile = File(...), user: str = Depends(current_user)):
+    """A game record becomes a review session: the starting position, the moves (also kept unchanged as `game`
+    so variations tried on the board never lose the game) and an empty review, run with .../review/step."""
+    data = file.file.read(500_000)
+    try:
+        game = review.parse_sgf(data)
+    except review.SgfError as ex:
+        raise HTTPException(400, str(ex))
+    n, moves = game['board_size'], game['moves']
+    played = [{'r': rc[0], 'c': rc[1], 'color': 1 if who == 'B' else 2}
+              for who, mv in moves if (rc := coach.parse_point(mv, n))]
+    matrix, to_play, _ = coach.final_position(game['base'], moves[0][0], moves)
+    names = ' vs '.join(x for x in (game['black'], game['white']) if x) or 'Ván SGF'
+    title = f'{names}{" · " + game["date"] if game["date"] else ""}'[:80]
+    s = sessions.create(user, {'board_size': n, 'base': game['base'], 'scan_id': None, 'played': played,
+                               'to_play': to_play, 'start_turn': moves[0][0], 'matrix': matrix, 'title': title,
+                               'game': game, 'review': review.new_review(game)})
+    return sessions.summary(s)
+
+
+@app.post('/api/sessions/{sid}/review/step')
+def review_step(sid: str, user: str = Depends(current_user)):
+    """Some more of the game review (~20 s of KataGo work); call again until status is "done"."""
+    s = _own_session(user, sid)
+    if not s.get('game'):
+        raise HTTPException(400, 'Ván này không có kỷ lục SGF để review')
+    r = s.get('review') or review.new_review(s['game'])
+    if r['status'] != 'done':
+        try:
+            r = review.step(s['game'], r, _katago_for(user, sid))
+        except QuotaExceeded as ex:
+            raise HTTPException(429, str(ex))
+        except KataGoError as ex:
+            raise HTTPException(ex.status, str(ex))
+        finally:
+            sessions.set_review(user, sid, r)   # keep what was done, also when stopped by an error
+    return review.progress(r)
 
 
 @app.get('/api/books/{book_id}/pages/{page}')

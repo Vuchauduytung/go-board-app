@@ -48,7 +48,8 @@
   .status.err { background: #f8e3e1; color: var(--err); }
   .spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: s .8s linear infinite; vertical-align: -3px; margin-right: 6px; }
   @keyframes s { to { transform: rotate(360deg); } }
-  #board { width: 100%; height: auto; display: block; touch-action: manipulation; border-radius: 6px; }
+  #board { width: 100%; height: auto; display: block; touch-action: manipulation; border-radius: 6px;
+           -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .stats { display: flex; gap: 14px; align-items: center; margin: 10px 0 12px; font-size: 14px; flex-wrap: wrap; }
   .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; vertical-align: -1px; margin-right: 4px; border: 1px solid #333; }
   .dot.b { background: #111; } .dot.w { background: #fff; }
@@ -99,6 +100,31 @@
   .ask textarea { flex: 1; resize: none; padding: 11px; border-radius: 10px; border: 1px solid var(--line); font: inherit; background: var(--card); color: var(--ink); min-height: 46px; }
   .ask .btn { width: auto; padding: 0 16px; }
   .suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .hist li.cur { background: #f6f1e8; border-radius: 8px; }
+  .hist .open { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; background: none; border: 0; padding: 0;
+                font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .hist svg { width: 48px; height: 48px; flex: none; border-radius: 6px; }
+  .icon { flex: none; border: 1px solid var(--line); background: var(--card); border-radius: 9px; width: 38px; height: 38px;
+          font-size: 17px; cursor: pointer; color: var(--ink); }
+  .icon.on { color: #c88a12; border-color: #e7c77c; background: #fbf3df; }
+  .boardhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .boardhead h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .applied { margin-top: 8px; padding: 8px 10px; border-radius: 9px; background: #e2f1e7; color: var(--ok); font-size: 13px;
+             display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .applied.err { background: #f8e3e1; color: var(--err); }
+  .applied button { flex: none; border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 8px;
+                    padding: 4px 9px; font: inherit; cursor: pointer; }
+  #who { text-align: right; }
+  .review { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+  .progress { height: 8px; border-radius: 4px; background: #efe7da; overflow: hidden; margin: 8px 0; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  ol.mistakes { list-style: none; margin: 10px 0 0; padding: 0; }
+  ol.mistakes li { border-top: 1px solid var(--line); padding: 8px 4px; cursor: pointer; font-size: 14px; border-radius: 8px; }
+  ol.mistakes li:first-child { border-top: 0; }
+  ol.mistakes li.on { background: #f6f1e8; }
+  ol.mistakes .loss { color: var(--err); font-weight: 700; }
+  ol.mistakes .line { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  ol.mistakes .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; flex-direction: column; z-index: 10;
             padding: calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom)); }
   .viewer .bar { display: flex; justify-content: space-between; align-items: center; color: #fff; gap: 10px; padding-bottom: 8px; }
@@ -111,7 +137,7 @@
 <main>
   <header>
     <h1>Go <span>Scan</span></h1>
-    <span class="muted">ảnh → ma trận</span>
+    <span class="muted" id="who"></span>
   </header>
   <nav class="tabs" id="tabs">
     <button type="button" data-tab="scan" class="on">📷 Nhận dạng</button>
@@ -128,6 +154,9 @@
         <input id="pick" type="file" accept="image/*">
       </label>
     </div>
+    <label class="btn secondary field">📂 Mở file SGF để review
+      <input id="sgf" type="file" accept=".sgf,application/x-go-sgf">
+    </label>
     <div class="row">
       <div class="field">
         <span>Bàn cờ</span>
@@ -146,6 +175,7 @@
         </select>
       </div>
     </div>
+    <button class="btn secondary field" type="button" id="newBoard">＋ Ván mới trên bàn trống</button>
   </section>
 
   <div id="status" class="status" hidden></div>
@@ -154,8 +184,11 @@
     <img id="preview" alt="Ảnh đã chụp">
   </section>
 
-  <section class="card" id="resultCard" hidden>
-    <h2>Bàn cờ — chạm điểm trống để đặt quân</h2>
+  <section class="card" id="resultCard">
+    <div class="boardhead">
+      <h2 id="boardTitle">Bàn cờ</h2>
+      <button class="icon" type="button" id="pinBtn" title="Lưu ván này">☆</button>
+    </div>
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="stats">
       <span><i class="dot b"></i><b id="nb">0</b> đen</span>
@@ -184,6 +217,21 @@
       <ol class="moves" id="moves"></ol>
     </div>
 
+    <div class="review" id="reviewBox" hidden>
+      <h2>📋 Review ván</h2>
+      <div class="muted" id="reviewInfo"></div>
+      <div class="progress" id="reviewProgress" hidden><i></i></div>
+      <button class="btn accent field" type="button" id="reviewRun" hidden>▶ Review ván này</button>
+      <div class="turn" id="reviewSides" hidden>
+        <div class="seg" id="reviewSide">
+          <button type="button" data-side="B" class="on">⚫ 10 lỗi của Đen</button>
+          <button type="button" data-side="W">⚪ 10 lỗi của Trắng</button>
+        </div>
+        <button class="src" type="button" id="gameEnd">⏭ Về cuối ván gốc</button>
+      </div>
+      <ol class="mistakes" id="mistakes"></ol>
+    </div>
+
     <div class="coach">
       <h2>💬 Hỏi về thế cờ này</h2>
       <div class="suggest" id="coachSuggest">
@@ -206,8 +254,12 @@
   </section>
 
   <section class="card">
-    <h2>Đã lưu gần đây</h2>
-    <ul class="hist" id="hist"><li class="muted">Chưa có</li></ul>
+    <h2>🕘 Ván gần đây</h2>
+    <ul class="hist" id="recent"><li class="muted">Chưa có ván nào</li></ul>
+  </section>
+  <section class="card">
+    <h2>⭐ Ván đã lưu <span class="muted" id="pinnedCount"></span></h2>
+    <ul class="hist" id="pinned"><li class="muted">Bấm ☆ cạnh tên ván để giữ lại lâu dài</li></ul>
   </section>
   </div>
 
@@ -241,12 +293,15 @@
 
 <script>
 const $ = id => document.getElementById(id);
-let scan = null;      // response of /api/recognize
+let scan = null;      // starting position: response of /api/recognize, or an empty board ({id: null, matrix})
+let session = null;   // review session on screen: {id, title, pinned}; created on the first change
+let game = null;      // game record of a session imported from SGF: {moves: [["B", "Q16" | "pass"]], komi, …}
+let reviewLine = null; // variation drawn over the board: {moves, first, number}
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
 let sugg = null;      // response of /api/analyze for the current matrix + toPlay
 // Stones placed on the photographed position (scan.matrix): corrections and tried moves alike
-let played = [];      // [{r, c, color: 1|2}] in order
+let played = [];      // [{r, c, color}] in order; color 1|2 = stone placed, 0 = stone removed (long-press)
 let startTurn = 'B';  // colour selected when the first stone was placed
 let redoStack = [];   // moves taken back with Undo, most recent last
 let koBoard = null;   // position before the last move: re-creating it is a ko violation
@@ -280,7 +335,6 @@ async function onFile(e) {
   if (!file) return;
   $('previewCard').hidden = false;
   $('preview').src = URL.createObjectURL(file);
-  $('resultCard').hidden = true;
   setStatus('info', '<span class="spinner"></span>Đang nhận dạng…');
   try {
     const fd = new FormData();
@@ -290,23 +344,47 @@ async function onFile(e) {
     const r = await fetch('api/recognize', { method: 'POST', body: fd });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
-    scan = j;
-    matrix = j.matrix.map(row => row.slice());
-    played = []; redoStack = []; koBoard = null; toPlay = 'B';
-    clearSugg();
-    $('coachLog').innerHTML = '';
-    lastSaved = '';
+    startBoard(j);
     $('meta').textContent = `${j.board_size}×${j.board_size} · ${{ moku: 'Moku', ai: 'image2sgf', gbr: 'gbr' }[j.method]} · ${j.elapsed}s`;
-    $('resultCard').hidden = false;
-    render();
     setStatus('ok', 'Đã nhận dạng. Thiếu quân so với ảnh thì chạm điểm trống để đặt thêm; bấm <b>Gợi ý</b> để xem nước tốt.');
     $('resultCard').scrollIntoView({ behavior: 'smooth' });
+    saveNow();   // a photographed position is worth a session right away
   } catch (err) {
     setStatus('err', 'Lỗi: ' + err.message);
   }
 }
 $('cam').addEventListener('change', onFile);
 $('pick').addEventListener('change', onFile);
+
+// A new review on `start` (a recognised photo or an empty board): nothing played yet, no session until a change
+function startBoard(start) {
+  scan = start;
+  matrix = clone(start.matrix);
+  played = []; redoStack = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
+  session = null;
+  game = null;
+  clearSugg();
+  $('coachLog').innerHTML = '';
+  showReview(null);
+  render();
+  showSession();
+}
+
+function emptyBoard(n) {
+  startBoard({ id: null, board_size: n, matrix: Array.from({ length: n }, () => Array(n).fill(0)) });
+  $('previewCard').hidden = true;
+  $('meta').textContent = `${n}×${n} · bàn trống`;
+}
+const pristine = () => !scan.id && !played.length;
+
+$('newBoard').addEventListener('click', () => {
+  emptyBoard(+$('size').value);
+  loadSessions();
+  setStatus('ok', 'Bàn trống: chạm để đặt quân từ nước đầu tiên, Đen đi trước.');
+});
+$('size').addEventListener('change', () => {   // the empty board follows the size; a game in progress is kept
+  if (pristine() && !session) emptyBoard(+$('size').value);
+});
 
 const COLS = 'ABCDEFGHJKLMNOPQRST';
 function stars(n) {
@@ -335,13 +413,28 @@ function render() {
     if (v === 2) { nw++; h += `<circle cx="${x}" cy="${y}" r="13.5" fill="#fafafa" stroke="#333" stroke-width=".8"/>`; }
     h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
   }
-  played.forEach((p, i) => {   // number the tried moves still on the board
+  let moveNo = 0;
+  played.forEach((p, i) => {   // number the placed stones still on the board (not under a review variation)
+    if (!p.color || reviewLine) return;
+    moveNo++;
     if (matrix[p.r][p.c] !== p.color || played.slice(i + 1).some(q => q.r === p.r && q.c === p.c)) return;
-    h += `<text x="${m + p.c * s}" y="${m + p.r * s + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${i + 1}</text>`;
+    h += `<text x="${m + p.c * s}" y="${m + p.r * s + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${moveNo}</text>`;
   });
   for (const k of coachMarks) {
     const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
     h += `<rect x="${m + k.col * s - 14}" y="${m + k.row * s - 14}" width="28" height="28" rx="6" fill="none" stroke="${col}" stroke-width="3" stroke-dasharray="5 3" pointer-events="none"/>`;
+  }
+  if (reviewLine) {   // the review's best variation, numbered, over the position before the mistake
+    let who = reviewLine.first;
+    reviewLine.moves.forEach((mv, i) => {
+      const rc = mv === 'pass' ? null : pointRC(mv);
+      if (rc) {
+        const x = m + rc[1] * s, y = m + rc[0] * s, black = who === 'B';
+        h += `<circle cx="${x}" cy="${y}" r="13" fill="${black ? 'rgba(20,20,20,.72)' : 'rgba(250,250,250,.88)'}" stroke="var(--ok)" stroke-width="${i ? 1.2 : 2.5}" pointer-events="none"/>`;
+        h += `<text x="${x}" y="${y + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${black ? '#fff' : '#141414'}" pointer-events="none">${i + 1}</text>`;
+      }
+      who = who === 'B' ? 'W' : 'B';
+    });
   }
   if (sugg) sugg.moves.forEach((mv, i) => {
     if (mv.row === null) return;
@@ -362,7 +455,7 @@ const clone = m => m.map(row => row.slice());
 
 function updateModeUI() {
   $('modeHint').innerHTML = pickMode ? '📍 Chạm vào một điểm trên bàn cờ để hỏi về nước đó.'
-    : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>↶ Lùi</b> để bỏ quân vừa đặt.`;
+    : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>chạm giữ</b> một quân để xoá · <b>↶ Lùi</b> để hoàn tác.`;
   for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
   $('undo').disabled = !played.length;
   $('redo').disabled = !redoStack.length;
@@ -402,9 +495,33 @@ function playMove(m, r, c, color) {
   return next;
 }
 
+// `who` ('B' | 'W') plays (r, c), then the other side is to move; returns an error message when illegal
+function place(r, c, who) {
+  const color = who === 'B' ? 1 : 2;
+  const next = playMove(matrix, r, c, color);
+  if (typeof next === 'string') return next;
+  if (!played.some(p => p.color)) startTurn = who;
+  koBoard = matrix;
+  matrix = next;
+  played.push({ r, c, color });
+  toPlay = who === 'B' ? 'W' : 'B';
+  return null;
+}
+
+// Take a stone off the board (not a move: the side to move stays)
+function takeOff(r, c) {
+  const was = matrix[r][c];
+  matrix = clone(matrix);
+  matrix[r][c] = 0;
+  koBoard = null;
+  played.push({ r, c, color: 0, was });
+  return was;
+}
+
 // Tap an empty point: place a stone of the selected colour, then the colour switches.
 // Stones are removed with Undo; the colour can be chosen any time with the Đen / Trắng buttons.
 $('board').addEventListener('click', e => {
+  if (suppressClick) { suppressClick = false; return; }   // this click ends a long-press
   const t = e.target.dataset;
   if (t.r === undefined) return;
   const r = +t.r, c = +t.c;
@@ -415,25 +532,52 @@ $('board').addEventListener('click', e => {
     render();
     return;
   }
-  const color = toPlay === 'B' ? 1 : 2;
-  const next = playMove(matrix, r, c, color);
-  if (typeof next === 'string') { setStatus('err', next + (matrix[r][c] ? ' Dùng ↶ Lùi để bỏ quân vừa đặt.' : '')); return; }
-  if (!played.length) startTurn = toPlay;
-  koBoard = matrix;
-  matrix = next;
-  played.push({ r, c, color });
+  const who = toPlay;
+  const err = place(r, c, who);
+  if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ↶ Lùi để bỏ quân vừa đặt.' : '')); return; }
   redoStack = [];
-  toPlay = toPlay === 'B' ? 'W' : 'B';
-  setStatus('info', `${NAME[color === 1 ? 'B' : 'W']} đặt ${pointName(r, c)} · tới lượt ${NAME[toPlay]}.`);
+  setStatus('info', `${NAME[who]} đặt ${pointName(r, c)} · tới lượt ${NAME[toPlay]}.`);
   clearSugg();
   render();
+  saveSoon();
 });
 
-// Board = photographed position + the stones placed since, replayed so captures and ko come out right
+// Long-press a stone to remove it (e.g. a stone recognised by mistake); recorded so Undo puts it back
+let pressTimer = null, pressAt = null, suppressClick = false;
+function removeStone(r, c) {
+  const was = takeOff(r, c);
+  redoStack = [];
+  navigator.vibrate?.(30);
+  setStatus('info', `Đã xoá quân ${NAME[was === 1 ? 'B' : 'W']} ở ${pointName(r, c)} · <b>↶ Lùi</b> để đặt lại.`);
+  clearSugg();
+  render();
+  saveSoon();
+}
+$('board').addEventListener('pointerdown', e => {
+  const t = e.target.dataset;
+  if (t.r === undefined || pickMode || !matrix[+t.r][+t.c]) return;
+  clearTimeout(pressTimer);
+  pressAt = [e.clientX, e.clientY];
+  pressTimer = setTimeout(() => { pressTimer = null; suppressClick = true; removeStone(+t.r, +t.c); }, 500);
+});
+$('board').addEventListener('pointermove', e => {   // a drag (page scroll) is not a long-press
+  if (pressTimer && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 10) { clearTimeout(pressTimer); pressTimer = null; }
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
+  $('board').addEventListener(ev, () => { clearTimeout(pressTimer); pressTimer = null; });
+}
+$('board').addEventListener('contextmenu', e => e.preventDefault());
+
+// Board = photographed position + the stones placed / removed since, replayed so captures and ko come out right
 function replay() {
   let board = scan.matrix;
   koBoard = null;   // playMove checks the ko against koBoard: rebuild it move by move
-  for (const p of played) { const prev = board; board = playMove(board, p.r, p.c, p.color); koBoard = prev; }
+  for (const p of played) {
+    const prev = board;
+    if (p.color) board = playMove(board, p.r, p.c, p.color);
+    else { board = clone(board); board[p.r][p.c] = 0; }
+    koBoard = p.color ? prev : null;
+  }
   matrix = clone(board);
   clearSugg();
   render();
@@ -443,30 +587,37 @@ $('undo').addEventListener('click', () => {
   if (!played.length) return;
   const p = played.pop();
   redoStack.push(p);
-  toPlay = p.color === 1 ? 'B' : 'W';   // the removed stone's colour plays again
+  if (p.color) toPlay = p.color === 1 ? 'B' : 'W';   // the removed stone's colour plays again
   replay();
-  setStatus('info', `Đã bỏ quân ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`);
+  setStatus('info', p.color ? `Đã bỏ quân ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`
+                            : `Đã đặt lại quân ở ${pointName(p.r, p.c)}.`);
+  saveSoon();
 });
 
 $('redo').addEventListener('click', () => {
   if (!redoStack.length) return;
   const p = redoStack.pop();
   played.push(p);
-  toPlay = p.color === 1 ? 'W' : 'B';
+  if (p.color) toPlay = p.color === 1 ? 'W' : 'B';
   replay();
-  setStatus('info', `Đặt lại ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`);
+  setStatus('info', p.color ? `Đặt lại ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`
+                            : `Xoá lại quân ở ${pointName(p.r, p.c)}.`);
+  saveSoon();
 });
 
 $('restart').addEventListener('click', () => {
-  if (played.length) toPlay = startTurn;
+  if (played.some(p => p.color)) toPlay = startTurn;
   played = []; redoStack = [];
   replay();
-  setStatus('ok', 'Đã về thế cờ như ảnh chụp.');
+  setStatus('ok', scan.id ? 'Đã về thế cờ như ảnh chụp.' : 'Đã về bàn trống.');
+  saveSoon();
 });
 
 function clearSugg() {
   sugg = null;
   coachMarks = [];
+  reviewLine = null;
+  document.querySelectorAll('#mistakes li.on').forEach(li => li.classList.remove('on'));
   $('sugg').hidden = true;
 }
 
@@ -476,6 +627,7 @@ $('turn').addEventListener('click', e => {
   toPlay = p;
   clearSugg();
   if (matrix) render();
+  saveSoon();
 });
 
 const pct = x => Math.round(x * 100) + '%';
@@ -484,14 +636,10 @@ $('analyze').addEventListener('click', async () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>KataGo đang tính…';
   try {
-    const r = await fetch('api/analyze', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matrix, to_play: toPlay }),
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.statusText);
+    let s = null;
+    try { s = await ensureSession(); } catch (e) { /* analysed without indexing it in a session */ }
+    const j = await apiJson('api/analyze', { method: 'POST', body: { matrix, to_play: toPlay, komi: komi(), session_id: s?.id } });
     sugg = j;
-    autoSave();
     // winrate / lead are for the side to move: show both sides on one bar (black fills from the left)
     const bWin = toPlay === 'B' ? j.winrate : 1 - j.winrate;
     const bLead = toPlay === 'B' ? j.score_lead : -j.score_lead;
@@ -516,36 +664,293 @@ $('analyze').addEventListener('click', async () => {
   }
 });
 
-// The board is saved (overwriting this scan's board.json) whenever it is analysed or discussed,
-// so the history keeps the position the user actually worked on.
-let lastSaved = '';
-async function autoSave() {
-  if (!scan || !matrix) return;
-  const snap = JSON.stringify([matrix, toPlay]);
-  if (snap === lastSaved) return;
-  lastSaved = snap;
-  try {
-    const r = await fetch('api/boards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({ id: scan.id, matrix, to_play: toPlay }) });
-    if (r.ok) loadHistory(); else lastSaved = '';
-  } catch (e) { lastSaved = ''; }
+// ---- sessions: every review is saved for its user; the 10 most recent are listed, starred ones are kept ----
+const boardState = () => ({ played, to_play: toPlay, start_turn: startTurn, matrix });
+let creating = null, saveTimer = null;
+
+// The session of the board on screen, created on first use
+async function ensureSession() {
+  if (session) return session;
+  if (!creating) {
+    const start = scan;
+    creating = apiJson('api/sessions', { method: 'POST', body: { base: scan.matrix, scan_id: scan.id, ...boardState() } })
+      .then(s => {
+        if (scan !== start) return null;   // the user moved on to another board meanwhile
+        session = { id: s.id, title: s.title, pinned: s.pinned };
+        showSession();
+        loadSessions();
+        return session;
+      })
+      .finally(() => { creating = null; });
+  }
+  return creating;
 }
 
-async function loadHistory() {
+function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
+async function saveNow() {
+  clearTimeout(saveTimer);
+  if (!session && !creating && pristine()) return;   // nothing worth keeping yet
+  const start = scan, created = !session && !creating;
   try {
-    const items = await (await fetch('api/boards')).json();
-    if (!items.length) return;
-    $('hist').innerHTML = items.map(b => `
-      <li>
-        <img src="api/boards/${b.id}/image" alt="" loading="lazy">
-        <div class="t">
-          <div><b>${b.board_size}×${b.board_size}</b> · ${b.black} đen · ${b.white} trắng${b.to_play ? ` · tới ${b.to_play === 'B' ? 'Đen' : 'Trắng'}` : ''}</div>
-          <div class="muted">${b.saved_at}${b.note ? ' · ' + b.note.replace(/[<>&]/g, '') : ''}</div>
-        </div>
-      </li>`).join('');
-  } catch (e) { /* history is optional */ }
+    const s = await ensureSession();
+    if (!s || created || scan !== start) return;      // a new session already holds the current state
+    await apiJson(`api/sessions/${s.id}`, { method: 'PUT', body: boardState() });
+  } catch (e) {
+    setStatus('err', 'Chưa lưu được ván: ' + esc(e.message));
+  }
 }
-loadHistory();
+
+function showSession() {
+  $('boardTitle').textContent = session ? session.title : 'Bàn cờ';
+  $('pinBtn').textContent = session?.pinned ? '★' : '☆';
+  $('pinBtn').classList.toggle('on', !!session?.pinned);
+  $('pinBtn').title = session?.pinned ? 'Bỏ lưu ván này' : 'Lưu ván này lâu dài';
+  for (const li of document.querySelectorAll('.hist li[data-id]')) li.classList.toggle('cur', li.dataset.id === session?.id);
+}
+
+async function setPinned(id, pinned, title) {
+  if (pinned) {
+    const name = prompt('Tên ván được lưu:', title);
+    if (name === null) return;
+    if (name.trim() && name.trim() !== title) await apiJson(`api/sessions/${id}`, { method: 'PUT', body: { title: name.trim() } });
+  }
+  const s = await apiJson(`api/sessions/${id}/pin`, { method: 'POST', body: { pinned } });
+  if (session?.id === id) { session.pinned = s.pinned; session.title = s.title; showSession(); }
+  loadSessions();
+}
+$('pinBtn').addEventListener('click', async () => {
+  try {
+    const s = await ensureSession();
+    if (s) await setPinned(s.id, !s.pinned, s.title);
+  } catch (e) { setStatus('err', esc(e.message)); }
+});
+
+function miniBoard(m) {
+  const n = m.length;
+  let h = `<svg viewBox="-.5 -.5 ${n} ${n}" aria-hidden="true"><rect x="-.5" y="-.5" width="${n}" height="${n}" fill="var(--wood)"/>`;
+  m.forEach((row, r) => row.forEach((v, c) => {
+    if (v) h += `<circle cx="${c}" cy="${r}" r=".47" fill="${v === 1 ? '#141414' : '#fafafa'}"/>`;
+  }));
+  return h + '</svg>';
+}
+const when = t => new Date(t * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+const sessionItem = s => `
+  <li data-id="${s.id}"${s.id === session?.id ? ' class="cur"' : ''}>
+    <button type="button" class="open" data-open="${s.id}">${s.matrix ? miniBoard(s.matrix) : ''}
+      <div class="t">
+        <div><b>${esc(s.title || 'Ván cờ')}</b></div>
+        <div class="muted">${s.sgf ? 'SGF' + (s.review === 'done' ? ' · đã review' : '') + ' · ' : ''}${s.board_size}×${s.board_size} · ${s.moves} nước · ${s.questions} câu hỏi · ${when(s.updated_at)}</div>
+      </div>
+    </button>
+    <button type="button" class="icon${s.pinned ? ' on' : ''}" data-pin="${s.id}" title="${s.pinned ? 'Bỏ lưu' : 'Lưu lâu dài'}">${s.pinned ? '★' : '☆'}</button>
+    <button type="button" class="icon" data-del="${s.id}" title="Xoá ván">🗑</button>
+  </li>`;
+
+let sessionList = { recent: [], pinned: [] };
+async function loadSessions() {
+  try {
+    sessionList = await apiJson('api/sessions');
+    const { recent, pinned, pinned_limit: limit } = sessionList;
+    $('recent').innerHTML = recent.map(sessionItem).join('') || '<li class="muted">Chưa có ván nào</li>';
+    $('pinned').innerHTML = pinned.map(sessionItem).join('') || '<li class="muted">Bấm ☆ cạnh tên ván để giữ lại lâu dài</li>';
+    $('pinnedCount').textContent = limit ? `${pinned.length}/${limit}` : pinned.length || '';
+  } catch (e) { /* the list is optional */ }
+}
+
+async function openSession(id) {
+  await saveNow();   // the board being left keeps its last changes
+  const s = await apiJson(`api/sessions/${id}`);
+  fetch('api/katago/warmup', { method: 'POST' }).catch(() => {});
+  startBoard({ id: s.scan_id, board_size: s.board_size, matrix: s.base });
+  session = { id: s.id, title: s.title, pinned: s.pinned };
+  game = s.game || null;
+  played = s.played; toPlay = s.to_play; startTurn = s.start_turn;
+  replay();
+  showReview(s.review);
+  showSession();
+  $('size').value = s.board_size;
+  $('previewCard').hidden = !s.scan_id;
+  if (s.scan_id) $('preview').src = `api/boards/${s.scan_id}/image`;
+  $('meta').textContent = `${s.board_size}×${s.board_size} · ${game ? `SGF · ${game.moves.length} nước · komi ${game.komi}` : s.scan_id ? 'từ ảnh chụp' : 'bàn trống'}`;
+  for (const e of s.chat) {
+    addMsg('q', esc(e.q), $('coachLog'), false);
+    const el = addMsg('a', '', $('coachLog'), false);
+    renderAnswer(el, { answer: e.a, sources: e.sources }, true);
+    if (e.actions?.length) note(el, '✓ Đã thay đổi bàn: ' + esc(actionsText(e.actions)));
+  }
+  setStatus('ok', `Đã mở “${esc(s.title)}” · tới lượt ${NAME[toPlay]}.`);
+  $('resultCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+for (const list of ['recent', 'pinned']) $(list).addEventListener('click', async e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  try {
+    if (b.dataset.open) await openSession(b.dataset.open);
+    else if (b.dataset.pin) {
+      const s = [...sessionList.recent, ...sessionList.pinned].find(x => x.id === b.dataset.pin);
+      if (s) await setPinned(s.id, !s.pinned, s.title);
+    } else if (b.dataset.del) {
+      if (!confirm('Xoá hẳn ván này?')) return;
+      await apiJson(`api/sessions/${b.dataset.del}`, { method: 'DELETE' });
+      if (session?.id === b.dataset.del) { session = null; showSession(); }
+      loadSessions();
+    }
+  } catch (err) { setStatus('err', esc(err.message)); }
+});
+
+// ---- SGF game records and their review ----
+const komi = () => game?.komi ?? 7.5;
+
+$('sgf').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  setStatus('info', '<span class="spinner"></span>Đang đọc file SGF…');
+  try {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    const r = await fetch('api/sgf', { method: 'POST', headers: { 'X-Client-Id': clientId }, body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    await openSession(j.id);
+    loadSessions();
+    runReview();
+  } catch (err) {
+    setStatus('err', 'Không mở được file SGF: ' + esc(err.message));
+  }
+});
+
+// Stones of the game record's first k moves, as entries of `played` (passes leave no stone)
+function gameStones(moves) {
+  return moves.filter(([, mv]) => mv !== 'pass')
+    .map(([who, mv]) => { const [r, c] = pointRC(mv); return { r, c, color: who === 'B' ? 1 : 2 }; });
+}
+
+// Show the game record after k moves; the rest of the game stays on ↷ Tiến
+function gotoGameMove(k) {
+  if (!game) return;
+  k = Math.max(0, Math.min(k, game.moves.length));
+  played = gameStones(game.moves.slice(0, k));
+  redoStack = gameStones(game.moves.slice(k)).reverse();
+  startTurn = game.moves[0][0];
+  toPlay = k < game.moves.length ? game.moves[k][0] : (game.moves[k - 1][0] === 'B' ? 'W' : 'B');
+  replay();
+  saveSoon();
+}
+$('gameEnd').addEventListener('click', () => { gotoGameMove(game.moves.length); setStatus('ok', 'Đã về cuối ván gốc.'); });
+
+let reviewData = null, reviewSide = 'B', reviewing = null;
+function showReview(r) {
+  if (r && r.deep_total === undefined) {   // the session's stored review: count the deep phase from its data
+    r = { ...r, deep_done: Object.keys(r.deep || {}).length, deep_total: Object.values(r.candidates || {}).flat().length };
+  }
+  reviewData = r;
+  $('reviewBox').hidden = !game;
+  if (!game) return;
+  const running = r && r.status !== 'done';
+  $('reviewInfo').textContent = !r ? '' : r.status === 'done'
+    ? `Đã review ${r.total - 1} nước (komi ${game.komi}). Chạm một lỗi để xem thế cờ trước nó và biến tốt nhất 10 nước.`
+    : r.phase === 'scan' ? `KataGo đang xem từng thế cờ: ${r.done}/${r.total}…`
+    : `Đang tính biến tốt nhất cho các lỗi lớn: ${r.deep_done}/${r.deep_total}…`;
+  $('reviewProgress').hidden = !running;
+  if (running) {
+    const done = r.phase === 'scan' ? r.done / r.total * .8 : .8 + .2 * r.deep_done / Math.max(1, r.deep_total);
+    $('reviewProgress').firstElementChild.style.width = Math.round(done * 100) + '%';
+  }
+  $('reviewRun').hidden = r?.status === 'done' || !!reviewing;
+  $('reviewRun').textContent = r && r.done ? '▶ Tiếp tục review' : '▶ Review ván này';
+  $('reviewSides').hidden = r?.status !== 'done';
+  for (const b of $('reviewSide').children) b.classList.toggle('on', b.dataset.side === reviewSide);
+  const list = r?.status === 'done' ? r.mistakes[reviewSide] : [];
+  $('mistakes').innerHTML = list.map((m, i) => `
+    <li data-i="${i}">
+      <div><b>${i + 1}.</b> Nước ${m.number}: ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
+        · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${m.best || '—'}</b></div>
+      <div class="line">Biến tốt nhất: ${m.line.map((mv, k) => `${k + 1}.${mv}`).join(' ')}</div>
+    </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');
+}
+
+// The browser drives the review: one request = ~20 s of KataGo work, progress is saved in the session
+async function runReview() {
+  if (!session || !game || reviewing) return;
+  const sid = reviewing = session.id;
+  showReview(reviewData);
+  try {
+    while (session?.id === sid) {
+      const r = await apiJson(`api/sessions/${sid}/review/step`, { method: 'POST' });
+      if (session?.id !== sid) break;
+      showReview(r);
+      if (r.status === 'done') { setStatus('ok', 'Review xong: chọn một lỗi để xem.'); loadSessions(); break; }
+    }
+  } catch (err) {
+    setStatus('err', 'Review tạm dừng: ' + esc(err.message) + ' · bấm <b>Tiếp tục review</b> để chạy tiếp.');
+  } finally {
+    reviewing = null;
+    if (session?.id === sid) showReview(reviewData);
+  }
+}
+$('reviewRun').addEventListener('click', runReview);
+$('reviewSide').addEventListener('click', e => {
+  const side = e.target.closest('button')?.dataset.side;
+  if (side) { reviewSide = side; showReview(reviewData); }
+});
+
+// A mistake: the position before it with the best variation drawn on top, and what to do with it
+$('mistakes').addEventListener('click', e => {
+  const li = e.target.closest('li[data-i]');
+  if (!li) return;
+  const m = reviewData.mistakes[reviewSide][+li.dataset.i];
+  const act = e.target.closest('button')?.dataset.act;
+  if (act === 'try') {
+    gotoGameMove(m.number - 1);
+    const moves = []; let who = m.color;
+    for (const mv of m.line) { if (mv !== 'pass') moves.push({ color: who, point: mv }); who = who === 'B' ? 'W' : 'B'; }
+    const res = applyActions([{ type: 'play', moves }]);
+    setStatus(res.error ? 'err' : 'ok', res.error ? esc(res.error) : `Đã đi thử biến tốt nhất thay cho nước ${m.number} · ↶ Lùi để xem từng nước.`);
+    return;
+  }
+  if (act === 'played') {
+    gotoGameMove(m.number);
+    setStatus('info', `Thế cờ sau nước ${m.number} (${NAME[m.color]} ${m.move}) trong ván gốc.`);
+    return;
+  }
+  if (act === 'ask') {
+    gotoGameMove(m.number);
+    askCoach(`Nước thứ ${m.number} (${NAME[m.color]} ${m.move}) sai ở đâu? Vì sao ${m.best} tốt hơn, và biến ${m.line.slice(0, 6).join(' ')} diễn ra thế nào?`);
+    return;
+  }
+  gotoGameMove(m.number - 1);
+  reviewLine = { moves: m.line, first: m.color, number: m.number };
+  document.querySelectorAll('#mistakes li').forEach(x => {
+    x.classList.toggle('on', x === li);
+    x.querySelector('.acts')?.remove();
+  });
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+  acts.innerHTML = '<button class="src" type="button" data-act="try">▶ Đi thử biến này</button>' +
+    '<button class="src" type="button" data-act="played">Xem nước đã đi</button>' +
+    '<button class="src" type="button" data-act="ask">💬 Hỏi trợ lý về lỗi này</button>';
+  li.appendChild(acts);
+  render();
+  setStatus('info', `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${m.line.length} trên bàn là biến tốt nhất bắt đầu bằng ${m.best}.`);
+  $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+// ---- signed-in user and today's usage ----
+function showMe(me) {
+  if (!me) return;
+  const name = me.user.includes('@') ? esc(me.user.split('@')[0]) : 'khách';
+  if (me.admin) {
+    $('who').innerHTML = `${name} · <b>admin</b>`;
+    $('quota').textContent = 'Admin: không giới hạn lượt dùng';
+    return;
+  }
+  const g = me.usage.llm, k = me.usage.katago;
+  const left = Math.max(0, Math.round(100 * (1 - g.used / g.limit)));
+  $('who').innerHTML = `${name}<br>còn ${left}% lượt hỏi hôm nay`;
+  $('quota').textContent = `Hôm nay còn ${left}% token AI · ${Math.max(0, Math.round(100 * (1 - k.used / k.limit)))}% lượt tìm KataGo`;
+}
 
 // ---- tabs ----
 $('tabs').addEventListener('click', e => {
@@ -565,6 +970,16 @@ if (!/^[a-z0-9]{16,64}$/.test(clientId)) {
   try { localStorage.setItem('goscan-client', clientId); } catch (e) {}
 }
 const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// JSON API call as this browser's user (the Google account behind IAP)
+async function apiJson(path, { method = 'GET', body } = {}) {
+  const headers = { 'X-Client-Id': clientId };
+  if (body) headers['Content-Type'] = 'application/json';
+  const r = await fetch(path, { method, headers, body: body && JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
 
 // Small Markdown subset: paragraphs, bullet/numbered lists, **bold**, *italic*, citations [n]
 function md(text, nSources) {
@@ -593,48 +1008,61 @@ function md(text, nSources) {
   return html;
 }
 
-function addMsg(kind, html, log = $('chatlog')) {
+function addMsg(kind, html, log = $('chatlog'), scroll = true) {
   const d = document.createElement('div');
   d.className = 'msg ' + kind;
   d.innerHTML = html;
   log.appendChild(d);
-  d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (scroll) d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   return d;
 }
 
-// Send a question to /api/chat and render the answer (+ book sources) into `log`
+// Cited book page, full screen, with previous / next page
+let viewing = null;
+function openPage(src, page) {
+  viewing = { src, page };
+  $('viewerTitle').textContent = `${src.title} — trang ${page}`;
+  $('viewerImg').src = `api/books/${src.book_id}/pages/${page}`;
+  $('viewer').hidden = false;
+}
+$('closeViewer').onclick = () => { $('viewer').hidden = true; };
+$('prevPage').onclick = () => viewing && viewing.page > 1 && openPage(viewing.src, viewing.page - 1);
+$('nextPage').onclick = () => viewing && openPage(viewing.src, viewing.page + 1);
+
+// Answer text + book sources into the message `el`
+function renderAnswer(el, j, board) {
+  el.innerHTML = md(j.answer, j.sources.length);
+  // board answers mostly rest on KataGo: list only the books the answer actually cites
+  const cited = new Set([...el.querySelectorAll('[data-cite]')].map(a => +a.dataset.cite));
+  const shown = board ? j.sources.filter(s => cited.has(s.n)) : j.sources;
+  if (!shown.length) return;
+  const box = document.createElement('div');
+  box.className = 'srcs';
+  shown.forEach(s => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'src';
+    b.textContent = `[${s.n}] ${s.title} · ${s.page_kind === 'page' ? 'tr. ' + s.page : s.chapter}`;
+    if (s.image) b.onclick = () => openPage(s, s.page); else b.disabled = true;
+    box.appendChild(b);
+  });
+  el.appendChild(box);
+  el.querySelectorAll('[data-cite]').forEach(a => a.onclick = ev => {
+    ev.preventDefault();
+    const s = j.sources[+a.dataset.cite - 1];
+    if (s.image) openPage(s, s.page);
+  });
+}
+
+// Send a question to /api/chat and render the answer (+ book sources) into `log`; j.el is the answer's message
 async function chatRequest(q, { log, btn, body = {}, waitText = 'Đang tra sách…' }) {
   addMsg('q', esc(q), log);
   const wait = addMsg('a', `<span class="spinner"></span>${waitText}`, log);
   btn.disabled = true;
   try {
-    const r = await fetch('api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Id': clientId },
-                                        body: JSON.stringify({ question: q, ...body }) });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    wait.innerHTML = md(j.answer, j.sources.length);
-    // board answers mostly rest on KataGo: list only the books the answer actually cites
-    const cited = new Set([...wait.querySelectorAll('[data-cite]')].map(a => +a.dataset.cite));
-    const shown = body.board ? j.sources.filter(s => cited.has(s.n)) : j.sources;
-    if (shown.length) {
-      const box = document.createElement('div');
-      box.className = 'srcs';
-      shown.forEach(s => {
-        const b = document.createElement('button');
-        b.type = 'button'; b.className = 'src';
-        b.textContent = `[${s.n}] ${s.title} · ${s.page_kind === 'page' ? 'tr. ' + s.page : s.chapter}`;
-        if (s.image) b.onclick = () => openPage(s, s.page); else b.disabled = true;
-        box.appendChild(b);
-      });
-      wait.appendChild(box);
-      wait.querySelectorAll('[data-cite]').forEach(a => a.onclick = ev => {
-        ev.preventDefault();
-        const s = j.sources[+a.dataset.cite - 1];
-        if (s.image) openPage(s, s.page);
-      });
-    }
-    $('quota').textContent = `Còn ${j.remaining_today} câu hỏi hôm nay`;
-    return j;
+    const j = await apiJson('api/chat', { method: 'POST', body: { question: q, ...body } });
+    renderAnswer(wait, j, !!body.board);
+    showMe(j.me);
+    return { ...j, el: wait };
   } catch (err) {
     wait.innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`;
     return null;
@@ -655,20 +1083,121 @@ async function askCoach(q) {
   q = q.trim();
   if (!q || !matrix) return;
   $('coachQ').value = '';
-  const board = { matrix, to_play: toPlay };
-  if (played.length) {
-    board.base = scan.matrix;
+  const board = { matrix, to_play: toPlay, komi: komi() };
+  const firstPlaced = played.findIndex(p => p.color);
+  const lastRemoved = played.map(p => !p.color).lastIndexOf(true);
+  if (firstPlaced >= 0 && lastRemoved < firstPlaced) {
+    // KataGo replays placed stones only: fold the earlier removals into the base position
+    const base = clone(scan.matrix);
+    played.filter(p => !p.color).forEach(p => { base[p.r][p.c] = 0; });
+    board.base = base;
     board.base_to_play = startTurn;
-    board.moves = played.map(p => [p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
+    board.moves = played.filter(p => p.color).map(p => [p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
   }
-  autoSave();
+  let s = null;
+  try { s = await ensureSession(); } catch (e) { /* asked without keeping the conversation */ }
   const snapshot = JSON.stringify(matrix) + toPlay;
-  const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board },
-                                   waitText: 'KataGo đang phân tích, rồi giải thích…' });
-  if (j && j.marks && JSON.stringify(matrix) + toPlay === snapshot) {   // board unchanged meanwhile
+  const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board, session_id: s?.id },
+                                   waitText: 'KataGo đang phân tích các biến, rồi giải thích…' });
+  if (!j) return;
+  const unchanged = JSON.stringify(matrix) + toPlay === snapshot;
+  if (unchanged && j.marks) {
     coachMarks = j.marks;
     render();
   }
+  if (j.actions?.length) offerActions(j.el, j.actions, unchanged);
+  if (s) loadSessions();
+}
+
+// ---- board edits asked of the coach ("áp dụng chuỗi đó", "xoá quân D4", "quay lại nước 5"…) ----
+function actionText(a) {
+  if (a.type === 'play') return 'đi ' + a.moves.map(m => `${NAME[m.color]} ${m.point}`).join(', ');
+  if (a.type === 'remove') return 'nhấc quân ' + a.points.join(', ');
+  if (a.type === 'back_to') return a.move_number ? `quay về sau nước ${a.move_number}` : 'quay về trước nước đầu tiên';
+  if (a.type === 'to_play') return `cho ${NAME[a.color]} đi`;
+  if (a.type === 'restart') return 'về thế cờ ban đầu';
+  return '';
+}
+const actionsText = list => list.map(actionText).join('; ');
+
+function pointRC(p) {
+  const n = matrix.length, c = COLS.indexOf(p[0]), r = n - parseInt(p.slice(1), 10);
+  return c >= 0 && c < n && r >= 0 && r < n ? [r, c] : null;
+}
+
+function restoreState(st) {
+  ({ played, toPlay, startTurn, redoStack } = st);
+  played = played.slice(); redoStack = redoStack.slice();
+  replay();
+  saveSoon();
+}
+
+// Apply all the edits or none: a move that is illegal here takes back the ones before it
+function applyActions(actions) {
+  const before = { played: played.slice(), toPlay, startTurn, redoStack: redoStack.slice() };
+  const fail = msg => { restoreState(before); return { error: msg }; };
+  for (const a of actions) {
+    if (a.type === 'play') {
+      for (const mv of a.moves) {
+        const rc = pointRC(mv.point);
+        const err = rc ? place(rc[0], rc[1], mv.color) : 'không có trên bàn cờ này.';
+        if (err) return fail(`${NAME[mv.color]} ${mv.point}: ${err}`);
+      }
+    } else if (a.type === 'remove') {
+      for (const p of a.points) {
+        const rc = pointRC(p);
+        if (!rc || !matrix[rc[0]][rc[1]]) return fail(`${p}: không có quân để nhấc.`);
+        takeOff(rc[0], rc[1]);
+      }
+    } else if (a.type === 'back_to') {
+      let k = 0;
+      const i = played.findIndex(p => p.color && ++k > a.move_number);   // first placed stone to drop
+      if (i >= 0) { toPlay = played[i].color === 1 ? 'B' : 'W'; played = played.slice(0, i); replay(); }
+    } else if (a.type === 'to_play') {
+      toPlay = a.color;
+    } else if (a.type === 'restart') {
+      if (played.some(p => p.color)) toPlay = startTurn;
+      played = [];
+      replay();
+    }
+  }
+  redoStack = [];
+  clearSugg();
+  render();
+  saveSoon();
+  return { before };
+}
+
+function note(el, html, kind = '') {
+  const box = document.createElement('div');
+  box.className = 'applied ' + kind;
+  box.innerHTML = html;
+  el.appendChild(box);
+  return box;
+}
+
+// Apply the coach's edits right away (with an undo), or offer them when the board changed while waiting
+function offerActions(el, actions, now) {
+  const box = note(el, '');
+  const what = esc(actionsText(actions));
+  const show = (kind, text, label, onclick) => {
+    box.className = 'applied ' + kind;
+    box.innerHTML = `<span>${text}</span><button type="button">${label}</button>`;
+    box.querySelector('button').onclick = onclick;
+  };
+  const run = () => {
+    const res = applyActions(actions);
+    if (res.error) { box.className = 'applied err'; box.innerHTML = `<span>Không áp dụng được: ${esc(res.error)}</span>`; return; }
+    setStatus('ok', `Đã áp dụng lên bàn: ${what} · tới lượt ${NAME[toPlay]}.`);
+    show('', `✓ Đã áp dụng lên bàn: ${what}`, '↶ Hoàn tác', () => {
+      restoreState(res.before);
+      setStatus('info', 'Đã hoàn tác thay đổi của trợ lý.');
+      show('err', `Đã hoàn tác: ${what}`, 'Áp dụng lại', run);
+    });
+    $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  if (now) run();
+  else show('err', `Bàn cờ đã đổi trong lúc chờ, chưa áp dụng: ${what}`, 'Áp dụng', run);
 }
 $('coachForm').addEventListener('submit', e => { e.preventDefault(); askCoach($('coachQ').value); });
 $('coachQ').addEventListener('keydown', e => {
@@ -694,6 +1223,12 @@ $('newChat').onclick = async () => {
   $('chatlog').innerHTML = '';
   try { await fetch('api/chat/reset', { method: 'POST', headers: { 'X-Client-Id': clientId } }); } catch (e) {}
 };
+
+// The board is always there: enter a game move by move, or photograph a position
+emptyBoard(+$('size').value);
+fetch('api/katago/warmup', { method: 'POST' }).catch(() => {});   // wake a scaled-to-zero KataGo GPU early
+apiJson('api/me').then(showMe).catch(() => {});
+loadSessions();
 </script>
 </body>
 </html>

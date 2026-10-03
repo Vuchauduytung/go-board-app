@@ -3,7 +3,8 @@ Loading the whole file would also pull cloud-bot's QDRANT_COLLECTION and point u
 import os, runpy, sys
 from dotenv import dotenv_values
 
-KEYS = ('QDRANT_URL', 'QDRANT_API_KEY', 'GEMINI_API_KEY', 'VALKEY_URL', 'VALKEY_TOKEN')
+KEYS = ('QDRANT_URL', 'QDRANT_API_KEY', 'GEMINI_API_KEY', 'VALKEY_URL', 'VALKEY_TOKEN',
+        'GROQ_API_KEY', 'OPENROUTER_API_KEY', 'MISTRAL_API_KEY', 'GITHUB_MODELS_TOKEN')
 env = dotenv_values(os.environ.get('CLOUD_BOT_ENV', '/home/quessalini/Tung/projects/cloud-bot/.env'))
 for k in KEYS:
     if env.get(k) and not os.environ.get(k):

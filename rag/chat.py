@@ -1,5 +1,6 @@
-# Go books chat: retrieval (rag.core) + Gemini Developer API (free tier) + Valkey history and quotas.
+# Go books chat: retrieval (rag.core) + free LLMs with fallbacks (rag.llm) + Valkey history and quotas.
 # Valkey is shared with cloud-bot, so every key here is prefixed with "go-scan:".
+# Questions about the board answer in JSON: the explanation plus edits to apply to the board on screen.
 
 import json
 import logging
@@ -8,12 +9,15 @@ import re
 import time
 from functools import lru_cache
 
+import accounts
+from accounts import QuotaExceeded
+from rag import llm
 from rag.core import format_context, search
 
 log = logging.getLogger('chat')
 
-GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash-lite')
 MAX_TOKENS = int(os.environ.get('CHAT_MAX_TOKENS', '900'))
+BOARD_MAX_TOKENS = int(os.environ.get('CHAT_BOARD_MAX_TOKENS', '2000'))   # longer: explains many variations, in JSON
 DAILY_LIMIT = int(os.environ.get('CHAT_DAILY_LIMIT', '300'))       # whole app, per UTC day
 PER_MINUTE = int(os.environ.get('CHAT_PER_MINUTE', '5'))           # per user
 HISTORY_TURNS = int(os.environ.get('CHAT_HISTORY_TURNS', '4'))
@@ -40,17 +44,50 @@ sống chết…), vì sao nước tốt nhất hơn các nước khác, và r�
 - "Nước 1, 2, 3…" là thứ tự nước gợi ý KataGo hiển thị trên màn hình.
 - Khi bàn về cả ván, dùng phần vùng ảnh hưởng để nói khu nào của ai, khu nào còn tranh chấp, và nên chơi ở đâu tiếp.
 - Bàn cờ được nhận dạng từ ảnh nên có thể sai vài quân; nếu thế cờ có vẻ vô lý, nhắc người dùng kiểm tra lại.
-- Dấu [n] chỉ dùng để trích sách; không viết các ghi chú kiểu "[xem thế cờ]" hay "[xem vùng ảnh hưởng]"."""
+- Dấu [n] chỉ dùng để trích sách; không viết các ghi chú kiểu "[xem thế cờ]" hay "[xem vùng ảnh hưởng]".
+- Khi giải thích một nước có 20 lựa chọn tốt nhất / 20 lựa chọn kém nhất thay cho nó và 10 biến tốt nhất / 10 biến \
+kém nhất sau nó: so sánh nước đó với các lựa chọn khác (nước nào hơn, vì sao; lựa chọn kém nào là lỗi hay gặp), rồi \
+nêu các cách đáp chính, các cách đáp sai đáng chú ý và bên kia trừng phạt thế nào; chỉ nêu các biến tiêu biểu, \
+không liệt kê hết."""
 
 
-class QuotaExceeded(Exception):
-    pass
+ACTIONS_PROMPT = """Trả lời bằng JSON {"answer": "...", "actions": [...]}. "answer" là câu trả lời (Markdown như bình thường).
+"actions" là các thay đổi trên bàn cờ đang hiển thị, CHỈ khi người dùng yêu cầu rõ ràng thay đổi bàn cờ (ví dụ "áp dụng \
+chuỗi đó vào ván", "đi thử biến 2 lên bàn", "xoá quân D4", "quân ở D4 là quân trắng", "quay lại nước 5", "cho Trắng \
+đi"); câu hỏi thường thì "actions" là []. Các thao tác, thực hiện lần lượt trên thế cờ hiện tại:
+- {"type": "play", "moves": [{"color": "B", "point": "Q16"}, {"color": "W", "point": "R14"}]}: đi các nước theo thứ tự \
+(B = Đen, W = Trắng; màu từng nước lấy đúng như trong chuỗi của KataGo). Sau đó tới lượt bên còn lại.
+- {"type": "remove", "points": ["D4"]}: nhấc quân khỏi bàn (sửa lỗi nhận dạng), không đổi lượt.
+- {"type": "back_to", "move_number": 5}: quay về ngay sau nước thứ 5 người dùng đã đặt (0 = trước nước đầu tiên), \
+bỏ các nước sau nó.
+- {"type": "to_play", "color": "W"}: chọn bên đi tiếp theo.
+- {"type": "restart"}: về thế cờ ban đầu (ảnh chụp hoặc bàn trống).
+Áp dụng một biến / chuỗi nghĩa là đi TẤT CẢ các nước của chuỗi đã liệt kê theo đúng thứ tự (biến của một cách đáp \
+sau nước X: đi X trước nếu X chưa có trên bàn, rồi cả chuỗi của cách đáp đó), trừ khi người dùng chỉ muốn vài nước đầu. \
+Chuỗi tính từ một thế cờ cũ (ví dụ thế cờ trước nước thứ 5) phải bắt đầu bằng back_to về thế cờ đó. Sửa màu một quân: \
+remove rồi play quân đúng màu, thêm to_play nếu cần giữ nguyên lượt. Không đi vào điểm đã có quân. Trong "answer", nói \
+ngắn gọn đã thay đổi gì trên bàn; không nói đã làm điều không có trong "actions"."""
 
-
-@lru_cache(maxsize=1)
-def _gemini():
-    from google import genai
-    return genai.Client(api_key=os.environ['GEMINI_API_KEY'])
+_COLOR = {'type': 'STRING', 'enum': ['B', 'W']}
+BOARD_SCHEMA = {
+    'type': 'OBJECT',
+    'properties': {
+        'answer': {'type': 'STRING'},
+        'actions': {'type': 'ARRAY', 'items': {
+            'type': 'OBJECT',
+            'properties': {
+                'type': {'type': 'STRING', 'enum': ['play', 'remove', 'back_to', 'to_play', 'restart']},
+                'moves': {'type': 'ARRAY', 'items': {'type': 'OBJECT', 'required': ['color', 'point'],
+                                                     'properties': {'color': _COLOR, 'point': {'type': 'STRING'}}}},
+                'points': {'type': 'ARRAY', 'items': {'type': 'STRING'}},
+                'move_number': {'type': 'INTEGER'},
+                'color': _COLOR,
+            },
+            'required': ['type'],
+        }},
+    },
+    'required': ['answer', 'actions'],
+}
 
 
 @lru_cache(maxsize=1)
@@ -81,12 +118,15 @@ def _incr(key, ttl):
 
 
 def reserve(user):
-    """Count one question against the per-user rate and the app's daily budget."""
-    if _incr(f'{PREFIX}:chat-rate:{user}:{int(time.time() // 60)}', 120) > PER_MINUTE:
+    """Count one question against the per-user rate, the user's token budget and the app's daily budget.
+    Admins are not limited, but their questions still count towards the app's daily total."""
+    admin = accounts.is_admin(user)
+    accounts.ensure(user, 'llm')
+    if _incr(f'{PREFIX}:chat-rate:{user}:{int(time.time() // 60)}', 120) > PER_MINUTE and not admin:
         raise QuotaExceeded(f'Tối đa {PER_MINUTE} câu hỏi mỗi phút, vui lòng chờ một chút.')
     day = time.strftime('%Y-%m-%d', time.gmtime())
     used = _incr(f'{PREFIX}:chat-daily:{day}', 2 * 86400)
-    if used > DAILY_LIMIT:
+    if used > DAILY_LIMIT and not admin:
         raise QuotaExceeded(f'Đã dùng hết {DAILY_LIMIT} câu hỏi hôm nay, quay lại vào ngày mai nhé.')
     return DAILY_LIMIT - used
 
@@ -132,56 +172,80 @@ def clear_history(user):
         log.warning('Could not clear Valkey history: %s', ex)
 
 
+def _board_reply(text):
+    """(answer, actions) from the model's JSON; a cut-off reply still yields its answer text."""
+    try:
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return text, []
+        return str(data.get('answer') or '').strip(), data.get('actions') or []
+    except ValueError:
+        m = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', text)
+        if not m:
+            return text, []
+        try:
+            return json.loads(f'"{m.group(1)}"').strip(), []
+        except ValueError:
+            return m.group(1).strip(), []
+
+
 def _generate(messages, context, board_context=None):
-    from google.genai import types
+    """-> (answer, actions, tokens, model). Actions are only produced for questions about the board."""
     system = SYSTEM_PROMPT
     if board_context:
-        system += f'\n\n{COACH_PROMPT}\n\n{board_context}'
+        system += f'\n\n{COACH_PROMPT}\n\n{ACTIONS_PROMPT}\n\n{board_context}'
     system += f'\n\nTÀI LIỆU THAM KHẢO:\n{context}' if context else '\n\n(Không tìm thấy đoạn sách liên quan.)'
-    resp = _gemini().models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[types.Content(role='model' if m['role'] == 'assistant' else 'user', parts=[types.Part(text=m['content'])])
-                  for m in messages],
-        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=MAX_TOKENS))
-    return (resp.text or '').strip()
+    if board_context:
+        r = llm.generate('board', system, messages, BOARD_MAX_TOKENS, schema=BOARD_SCHEMA)
+        answer, actions = _board_reply(r.text)
+    else:
+        r = llm.generate('books', system, messages, MAX_TOKENS)
+        answer, actions = r.text, []
+    return answer, actions, r.tokens, r.model
 
 
-TRANSLATE_PROMPT = ('Rewrite this Go (baduk/weiqi) question as a short English search query using standard English '
+TRANSLATE_PROMPT = ('Rewrite the Go (baduk/weiqi) question as a short English search query using standard English '
                     'Go terminology (e.g. tam giác ngu -> empty triangle, thế dày -> thickness, chấp -> handicap, '
-                    'thang -> ladder, đả nhập -> invasion, định thức -> joseki). Output only the query.\n\n')
+                    'thang -> ladder, đả nhập -> invasion, định thức -> joseki). Output only the query.')
 
 
 def english_query(question):
-    """Most books are in English and E5 matches poorly across languages: search with a translation too."""
+    """Most books are in English and E5 matches poorly across languages: search with a translation too.
+    -> (query or None, tokens used)"""
     if question.isascii():
-        return None
+        return None, 0
     try:
-        from google.genai import types
-        resp = _gemini().models.generate_content(
-            model=GEMINI_MODEL, contents=TRANSLATE_PROMPT + question,
-            config=types.GenerateContentConfig(max_output_tokens=60, temperature=0))
-        return (resp.text or '').strip().splitlines()[0][:300] or None
+        r = llm.generate('translate', TRANSLATE_PROMPT, [{'role': 'user', 'content': question}], 60, temperature=0)
+        return r.text.splitlines()[0][:300] or None, r.tokens
     except Exception as ex:
         log.warning('query translation failed: %s', ex)
-        return None
+        return None, 0
 
 
-def answer(user, question, board_context=None):
-    """board_context: text from coach.build_context when the question is about the board on screen;
-    that conversation keeps its own history, separate from the books tab."""
+def answer(user, question, board_context=None, history=None):
+    """board_context: text from coach.build_context when the question is about the board on screen.
+    history: that conversation's earlier messages (kept in its review session); without it the history is
+    the user's books chat in Valkey, saved here."""
     remaining = reserve(user)
-    english = english_query(question)
+    english, tokens = english_query(question)
+    accounts.add(user, 'llm', tokens)
     chunks = search([question] + ([english] if english else []))
     session = f'{user}:board' if board_context else user
-    history = get_history(session)
-    reply = _generate(history + [{'role': 'user', 'content': question}], format_context(chunks), board_context)
+    keep = history is None
+    if keep:
+        history = get_history(session)
+    reply, actions, used, model = _generate(history + [{'role': 'user', 'content': question}],
+                                            format_context(chunks), board_context)
+    accounts.add(user, 'llm', used)
     # the model sometimes adds pseudo-references like "[xem vùng ảnh hưởng]"; only [n] cites a book
-    reply = re.sub(r'\s*\[(?:xem|see|theo)\b[^\]]*\]', '', reply, flags=re.I).strip()
+    reply = re.sub(r'\s*\[(?:xem|see|theo|tham khảo)\b[^\]]*\]', '', reply, flags=re.I).strip()
     if not reply:
         reply = 'Mô hình không trả lời được, bạn thử hỏi lại nhé.'
-    save_exchange(session, question, reply)
+    if keep:
+        save_exchange(session, question, reply)
     sources = [{'n': i, 'book_id': c.book_id, 'title': c.title, 'page': c.page, 'page_kind': c.page_kind,
                 'chapter': c.chapter, 'score': round(c.score, 3),
                 'image': f'api/books/{c.book_id}/pages/{c.page}' if c.page_kind == 'page' else None}
                for i, c in enumerate(chunks, 1)]
-    return {'answer': reply, 'sources': sources, 'search_en': english, 'remaining_today': max(remaining, 0)}
+    return {'answer': reply, 'actions': actions, 'sources': sources, 'search_en': english, 'model': model,
+            'remaining_today': max(remaining, 0)}

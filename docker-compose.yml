@@ -18,6 +18,15 @@ services:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       VALKEY_URL: ${VALKEY_URL:-}
       VALKEY_TOKEN: ${VALKEY_TOKEN:-}
+      # accounts: comma-separated admin e-mails (no usage limits); without IAP everyone is LOCAL_USER if set,
+      # otherwise each browser is its own normal user
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      LOCAL_USER: ${LOCAL_USER:-}
+      # optional fallback LLM providers (rag/llm.py), skipped when empty
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GITHUB_MODELS_TOKEN: ${GITHUB_MODELS_TOKEN:-}
     depends_on:
       - katago
     restart: unless-stopped
