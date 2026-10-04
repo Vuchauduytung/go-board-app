@@ -4,7 +4,9 @@
 # their 10 most recent sessions plus the ones they pinned (PINNED_LIMIT for normal users, no limit for admins).
 # Every KataGo answer used in a session is also kept with it (<id>.kg/<key>.json) for repeated questions.
 
+import errno
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,10 +17,13 @@ from pathlib import Path
 
 import accounts
 
+log = logging.getLogger('sessions')
+
 ROOT = Path(os.environ.get('SESSIONS_DIR', Path(os.environ.get('DATA_DIR', Path(__file__).parent / 'data')) / 'sessions'))
 RECENT = 10
 PINNED_LIMIT = int(os.environ.get('SESSIONS_PINNED_LIMIT', '20'))
 CHAT_MAX = 100   # coach exchanges kept per session
+VARIATIONS_MAX = 200
 ID_RE = re.compile(r'^[0-9a-f]{32}$')
 _lock = threading.Lock()
 
@@ -45,10 +50,20 @@ def _read(f):
 
 
 def _write(f, s):
+    """Write via a temporary file of its own: on the Cloud Run bucket (gcsfuse) a fixed temporary name can be
+    left behind by another instance and fail with a stale file handle; that is retried once with a new name."""
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix('.tmp')
-    tmp.write_text(json.dumps(s, ensure_ascii=False))
-    tmp.replace(f)
+    data = json.dumps(s, ensure_ascii=False)
+    for attempt in (1, 2):
+        tmp = f.with_name(f'.{f.stem}.{uuid.uuid4().hex[:8]}.tmp')
+        try:
+            tmp.write_text(data)
+            tmp.replace(f)
+            return
+        except OSError as ex:
+            tmp.unlink(missing_ok=True)
+            if ex.errno != errno.ESTALE or attempt == 2:
+                raise
 
 
 def _all(user):
@@ -133,11 +148,19 @@ def delete(user, sid):
     return True
 
 
-def append_chat(user, sid, entry):
+def append_chat(user, sid, entry, variations=()):
+    """A coach exchange and the variations its answer named (listed under the board)."""
     def fn(s):
         s['chat'] = (s.get('chat', []) + [{**entry, 'at': time.time()}])[-CHAT_MAX:]
+        s['variations'] = (s.get('variations', []) + list(variations))[-VARIATIONS_MAX:]
         s['updated_at'] = time.time()
     return _change(user, sid, fn)
+
+
+def next_variation(s):
+    """Number of the session's next variation name (Var1, Var2…), never reusing one."""
+    names = [v['name'] for v in (s or {}).get('variations', [])]
+    return int(names[-1][3:]) + 1 if names else 1
 
 
 def has_scan(user, scan_id):
@@ -162,9 +185,10 @@ def cache_put(user, sid, key, value):
     f = _file(user, sid)
     if f is None or not f.is_file():
         return
-    d = _cache_dir(user, sid)
-    d.mkdir(parents=True, exist_ok=True)
-    _write(d / f'{key}.json', value)
+    try:   # only an index for repeated questions: never worth failing the request for
+        _write(_cache_dir(user, sid) / f'{key}.json', value)
+    except OSError as ex:
+        log.warning('KataGo answer not kept in session %s: %s', sid, ex)
 
 
 def history(s, turns):

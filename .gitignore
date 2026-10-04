@@ -21,6 +21,7 @@ iap-oauth.yaml
 
 # Admin e-mails for deploy/gcp.sh
 deploy/admins.txt
+deploy/telegram_admins.txt
 
 # Local compose settings
 .env

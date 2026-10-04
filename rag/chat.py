@@ -17,7 +17,7 @@ from rag.core import format_context, search
 log = logging.getLogger('chat')
 
 MAX_TOKENS = int(os.environ.get('CHAT_MAX_TOKENS', '900'))
-BOARD_MAX_TOKENS = int(os.environ.get('CHAT_BOARD_MAX_TOKENS', '2000'))   # longer: explains many variations, in JSON
+BOARD_MAX_TOKENS = int(os.environ.get('CHAT_BOARD_MAX_TOKENS', '3000'))   # longer: explains many variations, in JSON
 DAILY_LIMIT = int(os.environ.get('CHAT_DAILY_LIMIT', '300'))       # whole app, per UTC day
 PER_MINUTE = int(os.environ.get('CHAT_PER_MINUTE', '5'))           # per user
 HISTORY_TURNS = int(os.environ.get('CHAT_HISTORY_TURNS', '4'))
@@ -51,10 +51,23 @@ nêu các cách đáp chính, các cách đáp sai đáng chú ý và bên kia t
 không liệt kê hết."""
 
 
-ACTIONS_PROMPT = """Trả lời bằng JSON {"answer": "...", "actions": [...]}. "answer" là câu trả lời (Markdown như bình thường).
+ACTIONS_PROMPT = """Trả lời bằng JSON {"answer": "...", "variations": [...], "actions": [...]}. "answer" là câu trả lời \
+(Markdown như bình thường).
+"variations" là các biến (chuỗi nước đi) mà câu trả lời nêu ra, để người dùng bấm vào xem ngay trên bàn cờ. Mỗi khi \
+"answer" đưa ra một chuỗi từ 2 nước trở lên (biến tốt nhất, cách đáp, cách trừng phạt…), thêm nó vào "variations":
+- {"name": "Var1", "title": "Đen cắt ở R14", "from_move": null, "moves": [{"color": "B", "point": "Q16"}, \
+{"color": "W", "point": "R14"}]}. Đặt tên Var1, Var2, Var3… (hoặc từ số được chỉ định bên dưới) theo thứ tự xuất hiện; "title" là \
+mô tả rất ngắn (tối đa 6 từ).
+- "moves": đủ các nước của chuỗi theo đúng thứ tự, màu từng nước lấy đúng như trong chuỗi của KataGo, tối đa 12 nước.
+- "from_move": null nếu chuỗi bắt đầu từ thế cờ hiện tại; nếu chuỗi bắt đầu từ thế cờ cũ (ví dụ thay cho nước thứ 5 \
+người dùng đã đặt) thì là số nước được giữ lại trước chuỗi (ví dụ 4). Biến của một cách đáp sau nước X chưa có trên \
+bàn: chuỗi bắt đầu bằng chính X.
+- Trong "answer", nhắc tới biến bằng đúng tên trong ngoặc vuông, ví dụ "… diễn biến [Var1] …" (giao diện biến nó \
+thành liên kết); không cần viết lại toàn bộ chuỗi toạ độ, chỉ nêu vài nước chính. Không nêu biến không có trong \
+"variations". Không có chuỗi nào thì "variations" là [].
 "actions" là các thay đổi trên bàn cờ đang hiển thị, CHỈ khi người dùng yêu cầu rõ ràng thay đổi bàn cờ (ví dụ "áp dụng \
-chuỗi đó vào ván", "đi thử biến 2 lên bàn", "xoá quân D4", "quân ở D4 là quân trắng", "quay lại nước 5", "cho Trắng \
-đi"); câu hỏi thường thì "actions" là []. Các thao tác, thực hiện lần lượt trên thế cờ hiện tại:
+chuỗi đó vào ván", "xoá quân D4", "quân ở D4 là quân trắng", "quay lại nước 5", "cho Trắng đi"); câu hỏi thường, kể cả \
+khi có nêu biến, thì "actions" là []. Các thao tác, thực hiện lần lượt trên thế cờ hiện tại:
 - {"type": "play", "moves": [{"color": "B", "point": "Q16"}, {"color": "W", "point": "R14"}]}: đi các nước theo thứ tự \
 (B = Đen, W = Trắng; màu từng nước lấy đúng như trong chuỗi của KataGo). Sau đó tới lượt bên còn lại.
 - {"type": "remove", "points": ["D4"]}: nhấc quân khỏi bàn (sửa lỗi nhận dạng), không đổi lượt.
@@ -69,16 +82,27 @@ remove rồi play quân đúng màu, thêm to_play nếu cần giữ nguyên lư
 ngắn gọn đã thay đổi gì trên bàn; không nói đã làm điều không có trong "actions"."""
 
 _COLOR = {'type': 'STRING', 'enum': ['B', 'W']}
+_MOVES = {'type': 'ARRAY', 'items': {'type': 'OBJECT', 'required': ['color', 'point'],
+                                     'properties': {'color': _COLOR, 'point': {'type': 'STRING'}}}}
 BOARD_SCHEMA = {
     'type': 'OBJECT',
     'properties': {
         'answer': {'type': 'STRING'},
+        'variations': {'type': 'ARRAY', 'items': {
+            'type': 'OBJECT',
+            'properties': {
+                'name': {'type': 'STRING'},
+                'title': {'type': 'STRING'},
+                'from_move': {'type': 'INTEGER', 'nullable': True},
+                'moves': _MOVES,
+            },
+            'required': ['name', 'moves'],
+        }},
         'actions': {'type': 'ARRAY', 'items': {
             'type': 'OBJECT',
             'properties': {
                 'type': {'type': 'STRING', 'enum': ['play', 'remove', 'back_to', 'to_play', 'restart']},
-                'moves': {'type': 'ARRAY', 'items': {'type': 'OBJECT', 'required': ['color', 'point'],
-                                                     'properties': {'color': _COLOR, 'point': {'type': 'STRING'}}}},
+                'moves': _MOVES,
                 'points': {'type': 'ARRAY', 'items': {'type': 'STRING'}},
                 'move_number': {'type': 'INTEGER'},
                 'color': _COLOR,
@@ -86,7 +110,7 @@ BOARD_SCHEMA = {
             'required': ['type'],
         }},
     },
-    'required': ['answer', 'actions'],
+    'required': ['answer', 'variations', 'actions'],
 }
 
 
@@ -173,35 +197,36 @@ def clear_history(user):
 
 
 def _board_reply(text):
-    """(answer, actions) from the model's JSON; a cut-off reply still yields its answer text."""
+    """(answer, actions, variations) from the model's JSON; a cut-off reply still yields its answer text."""
     try:
         data = json.loads(text)
         if not isinstance(data, dict):
-            return text, []
-        return str(data.get('answer') or '').strip(), data.get('actions') or []
+            return text, [], []
+        return str(data.get('answer') or '').strip(), data.get('actions') or [], data.get('variations') or []
     except ValueError:
         m = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', text)
         if not m:
-            return text, []
+            return text, [], []
         try:
-            return json.loads(f'"{m.group(1)}"').strip(), []
+            return json.loads(f'"{m.group(1)}"').strip(), [], []
         except ValueError:
-            return m.group(1).strip(), []
+            return m.group(1).strip(), [], []
 
 
 def _generate(messages, context, board_context=None):
-    """-> (answer, actions, tokens, model). Actions are only produced for questions about the board."""
+    """-> (answer, actions, variations, tokens, model). Actions and variations only come with questions about
+    the board."""
     system = SYSTEM_PROMPT
     if board_context:
         system += f'\n\n{COACH_PROMPT}\n\n{ACTIONS_PROMPT}\n\n{board_context}'
     system += f'\n\nTÀI LIỆU THAM KHẢO:\n{context}' if context else '\n\n(Không tìm thấy đoạn sách liên quan.)'
     if board_context:
         r = llm.generate('board', system, messages, BOARD_MAX_TOKENS, schema=BOARD_SCHEMA)
-        answer, actions = _board_reply(r.text)
+        answer, actions, variations = _board_reply(r.text)
     else:
         r = llm.generate('books', system, messages, MAX_TOKENS)
-        answer, actions = r.text, []
-    return answer, actions, r.tokens, r.model
+        answer, actions, variations = r.text, [], []
+    return answer, actions, variations, r.tokens, r.model
 
 
 TRANSLATE_PROMPT = ('Rewrite the Go (baduk/weiqi) question as a short English search query using standard English '
@@ -234,7 +259,7 @@ def answer(user, question, board_context=None, history=None):
     keep = history is None
     if keep:
         history = get_history(session)
-    reply, actions, used, model = _generate(history + [{'role': 'user', 'content': question}],
+    reply, actions, variations, used, model = _generate(history + [{'role': 'user', 'content': question}],
                                             format_context(chunks), board_context)
     accounts.add(user, 'llm', used)
     # the model sometimes adds pseudo-references like "[xem vùng ảnh hưởng]"; only [n] cites a book
@@ -247,5 +272,5 @@ def answer(user, question, board_context=None, history=None):
                 'chapter': c.chapter, 'score': round(c.score, 3),
                 'image': f'api/books/{c.book_id}/pages/{c.page}' if c.page_kind == 'page' else None}
                for i, c in enumerate(chunks, 1)]
-    return {'answer': reply, 'actions': actions, 'sources': sources, 'search_en': english, 'model': model,
+    return {'answer': reply, 'actions': actions, 'variations': variations, 'sources': sources, 'search_en': english, 'model': model,
             'remaining_today': max(remaining, 0)}

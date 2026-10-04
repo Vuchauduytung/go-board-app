@@ -92,3 +92,23 @@ def test_oauth2_proxy_header_only_when_enabled(monkeypatch):
     assert accounts.identity(None, 'abc123', None, 'Admin@X.com') == 'abc123'
     monkeypatch.setattr(accounts, 'TRUST_FORWARDED', True)
     assert accounts.identity(None, 'abc123', None, 'Admin@X.com') == 'admin@x.com'
+
+
+def test_write_retries_stale_handle_and_cache_put_never_fails(tmp_path, monkeypatch):
+    import errno
+    from pathlib import Path
+    real, calls = Path.write_text, []
+
+    def flaky(self, *a, **k):
+        calls.append(self.name)
+        if len(calls) == 1:
+            raise OSError(errno.ESTALE, 'Stale file handle')
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, 'write_text', flaky)
+    sessions._write(tmp_path / 'x.json', {'a': 1})
+    assert (tmp_path / 'x.json').read_text() == '{"a": 1}' and calls[0] != calls[1]   # a fresh temporary name
+    assert [p.name for p in tmp_path.iterdir()] == ['x.json']
+
+    monkeypatch.setattr(sessions, '_write', lambda f, s: (_ for _ in ()).throw(OSError(errno.EIO, 'boom')))
+    monkeypatch.setattr(sessions, '_file', lambda user, sid: tmp_path / 'x.json')
+    sessions.cache_put('u', 'sid', 'k', {'v': 1})   # logged, not raised

@@ -10,6 +10,8 @@
 #   POST /api/chat        ask the Go books assistant (RAG over books/, see rag/); with a board: the coach
 #   GET  /api/me          signed-in user, role and today's usage
 #   /api/sessions         the user's review sessions: list, create, load, save, pin, delete
+#   /api/feedback         reviews of the app: public list, post (optionally anonymous), delete one's own
+#   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
 #
@@ -40,7 +42,9 @@ import accounts
 import coach
 import kgcache
 import review
+import feedback
 import sessions
+import telegram_bot
 from accounts import QuotaExceeded
 from img2sgf import get_board_model, get_stone_model, get_board_image, classifier_board
 from img2sgf.tools import get_board_position
@@ -116,6 +120,7 @@ def recognize_gbr(pil_img):
 
 
 app = FastAPI(title='Go board scanner')
+app.include_router(telegram_bot.router)
 
 
 def current_user(x_goog_authenticated_user_email: Optional[str] = Header(None),
@@ -366,10 +371,18 @@ class BoardIn2(BaseModel):
     komi: float = 7.5
 
 
+class Placed(BaseModel):
+    r: int
+    c: int
+    color: int                 # 1 black, 2 white, 0 = stone removed
+    was: Optional[int] = None  # colour of a removed stone
+
+
 class ChatIn(BaseModel):
     question: str
     board: Optional[BoardIn2] = None   # set when asking about the position on screen
     session_id: Optional[str] = None   # review session the board conversation belongs to
+    played: List[Placed] = []          # the board's stones placed / removed: where the answer's variations start
 
 
 @app.post('/api/chat')
@@ -385,6 +398,8 @@ def chat(c: ChatIn, user: str = Depends(current_user)):
         _check_board(b.matrix, b.to_play)
         if b.base is not None:
             _check_board(b.base, b.base_to_play or 'B')
+        played = [p.dict(exclude_none=True) for p in c.played]
+        _check_session(len(b.matrix), {'played': played})
         try:
             board_context, marks = coach.build_context(b.matrix, b.to_play, q, _katago_for(user, c.session_id),
                                                        base=b.base, base_to_play=b.base_to_play,
@@ -397,6 +412,10 @@ def chat(c: ChatIn, user: str = Depends(current_user)):
                              f'\nTới lượt: {coach.NAMES[c.board.to_play]}. (KataGo tạm thời không phân tích được, '
                              'hãy nói rõ là nhận xét chưa được máy kiểm chứng.)')
     history = sessions.history(session, HISTORY_TURNS) if session and c.board else None
+    first_var = sessions.next_variation(session)
+    if board_context:
+        board_context += (f'\n\nCác biến đã nêu trước đây giữ tên cũ (Var1 … Var{first_var - 1}); biến mới trong câu '
+                          f'trả lời này đặt tên từ Var{first_var}.' if first_var > 1 else '')
     try:
         res = answer(user, q, board_context, history)
     except QuotaExceeded as ex:
@@ -404,11 +423,15 @@ def chat(c: ChatIn, user: str = Depends(current_user)):
     except Exception as ex:
         log.exception('chat failed')
         raise HTTPException(502, f'Trợ lý tạm thời lỗi: {type(ex).__name__}')
-    actions = coach.clean_actions(res['actions'], len(c.board.matrix)) if c.board else []
+    actions, variations = [], []
+    if c.board:
+        n = len(c.board.matrix)
+        actions = coach.clean_actions(res['actions'], n)
+        variations, res['answer'] = coach.clean_variations(res['variations'], n, played, first_var, res['answer'])
     if session and c.board:
         sessions.append_chat(user, session['id'], {'q': q, 'a': res['answer'], 'sources': res['sources'],
-                                                   'marks': marks, 'actions': actions})
-    return {**res, 'actions': actions, 'marks': marks, 'me': accounts.usage(user)}
+                                                   'marks': marks, 'actions': actions}, variations)
+    return {**res, 'actions': actions, 'variations': variations, 'marks': marks, 'me': accounts.usage(user)}
 
 
 @app.post('/api/chat/reset')
@@ -418,16 +441,54 @@ def chat_reset(board: bool = False, user: str = Depends(current_user)):
     return {'ok': True}
 
 
+@app.get('/api/feedback')
+def list_feedback(user: str = Depends(current_user)):
+    return feedback.list_public(user)
+
+
+@app.post('/api/feedback')
+def post_feedback(rating: Optional[int] = Form(None), text: str = Form(''), anonymous: bool = Form(False),
+                  images: List[UploadFile] = File([]), user: str = Depends(current_user)):
+    """A review: 1–5 stars and/or a comment, up to 3 photos (multipart form)."""
+    text = text.strip()
+    if rating is not None and not 1 <= rating <= 5:
+        raise HTTPException(400, 'Số sao từ 1 đến 5')
+    if not text and rating is None and not images:
+        raise HTTPException(400, 'Hãy chấm sao, viết vài dòng hoặc gửi ảnh góp ý')
+    if len(text) > feedback.TEXT_MAX:
+        raise HTTPException(400, f'Góp ý dài tối đa {feedback.TEXT_MAX} ký tự')
+    if len(images) > feedback.IMAGES_MAX:
+        raise HTTPException(400, f'Tối đa {feedback.IMAGES_MAX} ảnh mỗi góp ý')
+    try:
+        jpegs = [feedback.encode_image(f.file.read(feedback.IMAGE_BYTES_MAX + 1)) for f in images]
+        r = feedback.add(user, rating, text, anonymous, jpegs)
+    except feedback.BadImage as ex:
+        raise HTTPException(400, str(ex))
+    except feedback.TooMany as ex:
+        raise HTTPException(429, str(ex))
+    telegram_bot.notify(r)
+    return feedback.public(r, user)
+
+
+@app.get('/api/feedback/{rid}/images/{k}')
+def feedback_image(rid: str, k: int, user: str = Depends(current_user)):
+    r = feedback.get(rid)
+    f = feedback.image_path(rid, k)
+    if not r or k >= r.get('images', 0) or (r.get('hidden') and not accounts.is_admin(user)) or not f.is_file():
+        raise HTTPException(404, 'Không có ảnh này')
+    return FileResponse(f, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=86400'})
+
+
+@app.delete('/api/feedback/{rid}')
+def delete_feedback(rid: str, user: str = Depends(current_user)):
+    if not feedback.delete(rid, None if accounts.is_admin(user) else user):
+        raise HTTPException(404, 'Không tìm thấy góp ý của bạn')
+    return {'ok': True}
+
+
 @app.get('/api/me')
 def me(user: str = Depends(current_user)):
     return {**accounts.usage(user), 'pinned_limit': None if accounts.is_admin(user) else sessions.PINNED_LIMIT}
-
-
-class Placed(BaseModel):
-    r: int
-    c: int
-    color: int                 # 1 black, 2 white, 0 = stone removed
-    was: Optional[int] = None  # colour of a removed stone
 
 
 class SessionIn(BaseModel):

@@ -133,3 +133,20 @@ def test_twenty_alternatives_and_ten_replies():
     count = lambda block: sum(1 for line in block.splitlines() if ' thắng ' in line)
     assert count(best_alts) == 20 and count(worst_alts) == 20
     assert count(replies[0]) == 10 and count(replies[1].split('VÙNG')[0]) == 10
+
+
+def test_clean_variations():
+    played = [{'r': 0, 'c': 0, 'color': 1}, {'r': 1, 'c': 1, 'color': 0, 'was': 2},
+              {'r': 2, 'c': 2, 'color': 2}, {'r': 3, 'c': 3, 'color': 1}]
+    vs, text = coach.clean_variations([
+        {'name': 'Var1', 'title': 'Cắt', 'from_move': None,
+         'moves': [{'color': 'B', 'point': 'c3'}, {'color': 'W', 'point': 'Z99'}]},
+        {'name': 'Var2', 'from_move': 1, 'moves': [{'color': 'W', 'point': 'D4'}]},
+        {'name': 'Var3', 'moves': []},
+        {'name': 'rm -rf', 'moves': [{'color': 'B', 'point': 'A1'}]},
+        'junk',
+    ], N, played, 4, 'Xem [Var1], rồi var2; [Var3] bỏ, [Var2] cũ giữ? [Var9] không có.')
+    assert [v['name'] for v in vs] == ['Var4', 'Var5']
+    assert vs[0] == {'name': 'Var4', 'title': 'Cắt', 'start': played, 'moves': [{'color': 'B', 'point': 'C3'}]}
+    assert vs[1]['start'] == played[:2]   # after the first placed stone, removals before the second kept
+    assert text == 'Xem [Var4], rồi [Var5]; [Var3] bỏ, [Var5] cũ giữ? Var9 không có.'

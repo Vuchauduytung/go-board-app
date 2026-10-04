@@ -80,7 +80,7 @@
   .tabs { display: flex; gap: 6px; margin: 0 0 14px; background: #efe7da; padding: 4px; border-radius: 12px; }
   .tabs button { flex: 1; border: 0; background: transparent; font: inherit; font-weight: 600; padding: 10px; border-radius: 9px; color: var(--muted); cursor: pointer; }
   .tabs button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-  .chatlog { display: flex; flex-direction: column; gap: 10px; min-height: 120px; }
+  .chatlog { display: flex; flex-direction: column; gap: 10px; }
   .msg { padding: 10px 12px; border-radius: 12px; max-width: 92%; overflow-wrap: anywhere; }
   .msg.q { align-self: flex-end; background: var(--ink); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
   .msg.a { align-self: flex-start; background: #f6f1e8; border-bottom-left-radius: 4px; }
@@ -95,7 +95,6 @@
   .mode b { color: var(--accent); }
   .seg.locked { opacity: .55; }
   .coach { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
-  .coach .chatlog { min-height: 0; }
   #pickPoint.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .ask textarea { flex: 1; resize: none; padding: 11px; border-radius: 10px; border: 1px solid var(--line); font: inherit; background: var(--card); color: var(--ink); min-height: 46px; }
   .ask .btn { width: auto; padding: 0 16px; }
@@ -125,6 +124,42 @@
   ol.mistakes .loss { color: var(--err); font-weight: 700; }
   ol.mistakes .line { color: var(--muted); font-size: 12px; margin-top: 2px; }
   ol.mistakes .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .stars { display: flex; gap: 4px; margin-bottom: 10px; }
+  .stars button { border: 0; background: none; font-size: 34px; line-height: 1; color: #d9cfbf; cursor: pointer; padding: 0 2px; }
+  .stars button.on { color: #e0a21b; }
+  #reviewText { width: 100%; box-sizing: border-box; resize: vertical; padding: 11px; border-radius: 10px; border: 1px solid var(--line);
+                font: inherit; background: var(--card); color: var(--ink); }
+  .anon { display: block; margin-top: 8px; font-size: 14px; }
+  #reviewAddImg { margin-top: 8px; }
+  .rimgs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .rimgs:not(:empty) { margin-top: 8px; }
+  .rimgs .ri { position: relative; width: 76px; height: 76px; border-radius: 9px; overflow: hidden; border: 1px solid var(--line);
+               padding: 0; background: var(--card); cursor: pointer; flex: none; }
+  .rimgs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .rimgs .x { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; border: 0;
+              background: rgba(0,0,0,.6); color: #fff; font-size: 14px; line-height: 22px; padding: 0; cursor: pointer; }
+  ul.reviews { list-style: none; margin: 0; padding: 0; }
+  ul.reviews li { border-top: 1px solid var(--line); padding: 10px 0; }
+  ul.reviews li:first-child { border-top: 0; }
+  ul.reviews .rh { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+  ul.reviews .st { color: #e0a21b; letter-spacing: 1px; }
+  ul.reviews .tx { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  ul.reviews .del { margin-left: auto; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+  .vars { margin: 10px 0 4px; }
+  .vars h3 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: baseline; }
+  .vars ul { list-style: none; margin: 0; padding: 0; max-height: 172px; overflow-y: auto; border: 1px solid var(--line);
+             border-radius: 10px; overscroll-behavior: contain; }
+  .vars li { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; border-top: 1px solid var(--line);
+             cursor: pointer; font-size: 13px; }
+  .vars li:first-child { border-top: 0; }
+  .vars li.on { background: #f6f1e8; }
+  .vars .vn { flex: none; color: var(--accent); font-weight: 700; }
+  .vars .vt { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vars .pv { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  a.var { color: var(--accent); font-weight: 700; text-decoration: underline dotted; text-underline-offset: 2px; border-radius: 4px; }
+  a.var.on { background: var(--accent); color: #fff; text-decoration: none; padding: 0 3px; }
+  .vars h3 button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
+                    padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
   .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; flex-direction: column; z-index: 10;
             padding: calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom)); }
   .viewer .bar { display: flex; justify-content: space-between; align-items: center; color: #fff; gap: 10px; padding-bottom: 8px; }
@@ -141,7 +176,7 @@
   </header>
   <nav class="tabs" id="tabs">
     <button type="button" data-tab="scan" class="on">📷 Nhận dạng</button>
-    <button type="button" data-tab="chat">💬 Hỏi đáp</button>
+    <button type="button" data-tab="reviews">⭐ Đánh giá</button>
   </nav>
   <div id="tab-scan">
 
@@ -190,6 +225,11 @@
       <button class="icon" type="button" id="pinBtn" title="Lưu ván này">☆</button>
     </div>
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="vars" id="varsBox" hidden>
+      <h3><span>🔀 Biến thể trong ván này <span class="muted" id="varCount"></span></span>
+        <button type="button" id="varBack" hidden title="Về thế cờ trước khi xem biến">↶ Thế cờ trước</button></h3>
+      <ul id="varList"></ul>
+    </div>
     <div class="stats">
       <span><i class="dot b"></i><b id="nb">0</b> đen</span>
       <span><i class="dot w"></i><b id="nw">0</b> trắng</span>
@@ -245,6 +285,7 @@
         <textarea id="coachQ" rows="1" maxlength="1000" placeholder="Ví dụ: Nước Q16 có tốt không?"></textarea>
         <button class="btn accent" id="coachBtn">Hỏi</button>
       </form>
+      <div class="muted field" id="quota"></div>
     </div>
 
     <details>
@@ -263,32 +304,33 @@
   </section>
   </div>
 
-  <div id="tab-chat" hidden>
+  <div id="tab-reviews" hidden>
     <section class="card">
-      <h2>Hỏi đáp từ sách cờ vây</h2>
-      <p class="muted" style="margin:0 0 10px">11 cuốn: khai cuộc, định thức, tấn công – phòng thủ, xâm nhập, hình cờ, châm ngôn, chấp quân, sống chết.</p>
-      <div class="suggest" id="suggest">
-        <button class="src" type="button">Song phi yến là gì?</button>
-        <button class="src" type="button">Khi nào nên xâm nhập khung đối phương?</button>
-        <button class="src" type="button">Châm ngôn "tránh xa thế dày" nghĩa là gì?</button>
-        <button class="src" type="button">Vì sao tam giác ngu là hình xấu?</button>
-      </div>
-      <div class="chatlog" id="chatlog"></div>
-      <form class="ask" id="askForm">
-        <textarea id="question" rows="1" maxlength="1000" placeholder="Hỏi về cờ vây…"></textarea>
-        <button class="btn accent" id="askBtn">Gửi</button>
+      <h2>Góp ý cho Go Scan</h2>
+      <p class="muted" style="margin:0 0 10px">Bạn thấy app thế nào? Lỗi gặp phải, tính năng muốn có… mọi góp ý đều được đọc.</p>
+      <form id="reviewForm">
+        <div class="stars" id="stars" role="radiogroup" aria-label="Số sao">
+          <button type="button" data-v="1" aria-label="1 sao">★</button><button type="button" data-v="2" aria-label="2 sao">★</button><button type="button" data-v="3" aria-label="3 sao">★</button><button type="button" data-v="4" aria-label="4 sao">★</button><button type="button" data-v="5" aria-label="5 sao">★</button>
+        </div>
+        <textarea id="reviewText" rows="4" maxlength="2000" placeholder="Viết góp ý của bạn…"></textarea>
+        <div class="rimgs" id="reviewImgs"></div>
+        <button class="src" type="button" id="reviewAddImg">📷 Thêm ảnh (tối đa 3)</button>
+        <input type="file" id="reviewFiles" accept="image/*" multiple hidden>
+        <label class="anon"><input type="checkbox" id="reviewAnon"> Gửi ẩn danh
+          <span class="muted">· tên bạn không hiện công khai, chỉ admin thấy</span></label>
+        <button class="btn accent field" id="reviewBtn">Gửi góp ý</button>
       </form>
-      <div class="row field" style="align-items:center">
-        <span class="muted" id="quota"></span>
-        <button class="btn secondary" type="button" id="newChat" style="flex:0 0 auto;width:auto;padding:9px 14px">Cuộc trò chuyện mới</button>
-      </div>
+    </section>
+    <section class="card">
+      <h2>Mọi người nói gì <span class="muted" id="reviewSummary"></span></h2>
+      <ul class="reviews" id="reviewList"><li class="muted">Chưa có góp ý nào</li></ul>
     </section>
   </div>
 </main>
 <div class="viewer" id="viewer" hidden>
   <div class="bar"><span id="viewerTitle"></span>
     <span><button type="button" id="prevPage">‹</button> <button type="button" id="nextPage">›</button> <button type="button" id="closeViewer">Đóng</button></span></div>
-  <div class="img"><img id="viewerImg" alt="Trang sách"></div>
+  <div class="img"><img id="viewerImg" alt="Ảnh"></div>
 </div>
 
 <script>
@@ -307,6 +349,8 @@ let redoStack = [];   // moves taken back with Undo, most recent last
 let koBoard = null;   // position before the last move: re-creating it is a ko violation
 let coachMarks = [];  // moves judged by the coach chat: [{row, col, loss}]
 let pickMode = false; // next tap on the board asks the coach about that point
+let variations = [];  // variations named in the coach's answers: [{name, title, start (entries of played), moves}]
+let activeVar = null; // variation on the board: {name, from (its first index in played), before (state to go back to)}
 
 function setStatus(kind, html) {
   const s = $('status');
@@ -365,6 +409,7 @@ function startBoard(start) {
   game = null;
   clearSugg();
   $('coachLog').innerHTML = '';
+  variations = []; activeVar = null;
   showReview(null);
   render();
   showSession();
@@ -413,9 +458,10 @@ function render() {
     if (v === 2) { nw++; h += `<circle cx="${x}" cy="${y}" r="13.5" fill="#fafafa" stroke="#333" stroke-width=".8"/>`; }
     h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
   }
+  if (activeVar && played.length < activeVar.from) activeVar = null;   // taken back past the variation's start
   let moveNo = 0;
   played.forEach((p, i) => {   // number the placed stones still on the board (not under a review variation)
-    if (!p.color || reviewLine) return;
+    if (!p.color || reviewLine || (activeVar && i < activeVar.from)) return;   // a variation counts from its 1st move
     moveNo++;
     if (matrix[p.r][p.c] !== p.color || played.slice(i + 1).some(q => q.r === p.r && q.c === p.c)) return;
     h += `<text x="${m + p.c * s}" y="${m + p.r * s + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${moveNo}</text>`;
@@ -445,6 +491,7 @@ function render() {
   });
   svg.innerHTML = h;
   updateModeUI();
+  renderVars();
   $('nb').textContent = nb; $('nw').textContent = nw;
   $('matrixText').textContent = matrix.map(r => r.join(' ')).join('\n');
 }
@@ -607,7 +654,7 @@ $('redo').addEventListener('click', () => {
 
 $('restart').addEventListener('click', () => {
   if (played.some(p => p.color)) toPlay = startTurn;
-  played = []; redoStack = [];
+  played = []; redoStack = []; activeVar = null;
   replay();
   setStatus('ok', scan.id ? 'Đã về thế cờ như ảnh chụp.' : 'Đã về bàn trống.');
   saveSoon();
@@ -765,6 +812,7 @@ async function openSession(id) {
   session = { id: s.id, title: s.title, pinned: s.pinned };
   game = s.game || null;
   played = s.played; toPlay = s.to_play; startTurn = s.start_turn;
+  variations = s.variations || [];
   replay();
   showReview(s.review);
   showSession();
@@ -831,6 +879,7 @@ function gameStones(moves) {
 function gotoGameMove(k) {
   if (!game) return;
   k = Math.max(0, Math.min(k, game.moves.length));
+  activeVar = null;
   played = gameStones(game.moves.slice(0, k));
   redoStack = gameStones(game.moves.slice(k)).reverse();
   startTurn = game.moves[0][0];
@@ -938,8 +987,9 @@ $('mistakes').addEventListener('click', e => {
 });
 
 // ---- signed-in user and today's usage ----
-function showMe(me) {
-  if (!me) return;
+function showMe(m) {
+  if (!m) return;
+  me = m;
   const name = me.user.includes('@') ? esc(me.user.split('@')[0]) : 'khách';
   if (me.admin) {
     $('who').innerHTML = `${name} · <b>admin</b>`;
@@ -958,8 +1008,8 @@ $('tabs').addEventListener('click', e => {
   if (!t) return;
   for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.tab === t);
   $('tab-scan').hidden = t !== 'scan';
-  $('tab-chat').hidden = t !== 'chat';
-  if (t === 'chat') $('question').focus();
+  $('tab-reviews').hidden = t !== 'reviews';
+  if (t === 'reviews') loadReviews();
 });
 
 // ---- chat ----
@@ -981,11 +1031,12 @@ async function apiJson(path, { method = 'GET', body } = {}) {
   return j;
 }
 
-// Small Markdown subset: paragraphs, bullet/numbered lists, **bold**, *italic*, citations [n]
+// Small Markdown subset: paragraphs, bullet/numbered lists, **bold**, *italic*, citations [n], variations [Var3]
 function md(text, nSources) {
   const inline = t => esc(t)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<i>$2</i>')
+    .replace(/\[(Var\d+)\]/g, '<a href="#" class="var" data-var="$1">$1</a>')
     .replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m, list) => {
       const ns = list.split(',').map(x => +x.trim());
       return ns.every(n => n >= 1 && n <= nSources)
@@ -1008,7 +1059,7 @@ function md(text, nSources) {
   return html;
 }
 
-function addMsg(kind, html, log = $('chatlog'), scroll = true) {
+function addMsg(kind, html, log = $('coachLog'), scroll = true) {
   const d = document.createElement('div');
   d.className = 'msg ' + kind;
   d.innerHTML = html;
@@ -1021,8 +1072,14 @@ function addMsg(kind, html, log = $('chatlog'), scroll = true) {
 let viewing = null;
 function openPage(src, page) {
   viewing = { src, page };
-  $('viewerTitle').textContent = `${src.title} — trang ${page}`;
-  $('viewerImg').src = `api/books/${src.book_id}/pages/${page}`;
+  openImage(`api/books/${src.book_id}/pages/${page}`, `${src.title} — trang ${page}`, true);
+}
+// Full screen image; ‹ › only for book pages
+function openImage(url, title, pages = false) {
+  if (!pages) viewing = null;
+  $('viewerTitle').textContent = title;
+  $('viewerImg').src = url;
+  $('prevPage').hidden = $('nextPage').hidden = !pages;
   $('viewer').hidden = false;
 }
 $('closeViewer').onclick = () => { $('viewer').hidden = true; };
@@ -1071,13 +1128,6 @@ async function chatRequest(q, { log, btn, body = {}, waitText = 'Đang tra sách
   }
 }
 
-async function ask(q) {
-  q = q.trim();
-  if (!q) return;
-  $('question').value = '';
-  await chatRequest(q, { log: $('chatlog'), btn: $('askBtn') });
-}
-
 // ---- coach: chat about the position on screen (KataGo numbers + books) ----
 async function askCoach(q) {
   q = q.trim();
@@ -1097,9 +1147,10 @@ async function askCoach(q) {
   let s = null;
   try { s = await ensureSession(); } catch (e) { /* asked without keeping the conversation */ }
   const snapshot = JSON.stringify(matrix) + toPlay;
-  const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board, session_id: s?.id },
+  const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board, played, session_id: s?.id },
                                    waitText: 'KataGo đang phân tích các biến, rồi giải thích…' });
   if (!j) return;
+  if (j.variations?.length) { variations = variations.concat(j.variations); renderVars(); }
   const unchanged = JSON.stringify(matrix) + toPlay === snapshot;
   if (unchanged && j.marks) {
     coachMarks = j.marks;
@@ -1134,6 +1185,7 @@ function restoreState(st) {
 
 // Apply all the edits or none: a move that is illegal here takes back the ones before it
 function applyActions(actions) {
+  activeVar = null;
   const before = { played: played.slice(), toPlay, startTurn, redoStack: redoStack.slice() };
   const fail = msg => { restoreState(before); return { error: msg }; };
   for (const a of actions) {
@@ -1199,6 +1251,65 @@ function offerActions(el, actions, now) {
   if (now) run();
   else show('err', `Bàn cờ đã đổi trong lúc chờ, chưa áp dụng: ${what}`, 'Áp dụng', run);
 }
+// ---- variations: [VarN] in an answer, or a row of the list under the board, puts that line on the board ----
+const varMoves = v => v.moves.map(m => `${m.color === 'B' ? '⚫' : '⚪'}${m.point}`).join(' ');
+function renderVars() {
+  $('varsBox').hidden = !variations.length;
+  $('varCount').textContent = variations.length ? `(${variations.length})` : '';
+  $('varBack').hidden = !activeVar;
+  const on = activeVar?.name;
+  const html = variations.slice().reverse().map(v => `
+    <li data-var="${esc(v.name)}"${v.name === on ? ' class="on"' : ''} title="${esc(v.title || '')}">
+      <span class="vn">${esc(v.name)}</span>${v.title ? `<span class="vt">${esc(v.title)}</span>` : ''}
+      <span class="pv">${varMoves(v)}</span>
+    </li>`).join('');
+  if ($('varList').innerHTML !== html) $('varList').innerHTML = html;   // render() runs often: keep the scroll
+  document.querySelectorAll('a.var').forEach(a => a.classList.toggle('on', a.dataset.var === on));
+}
+
+// The position the variation starts from, then its moves; ↶ Lùi steps back through them
+function showVariation(name) {
+  const v = variations.find(x => x.name === name);
+  if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return; }
+  const before = activeVar?.before || { played: played.slice(), toPlay, startTurn, redoStack: redoStack.slice() };
+  played = v.start.map(p => ({ ...p }));
+  redoStack = [];
+  replay();
+  for (const mv of v.moves) {
+    const rc = pointRC(mv.point);
+    const err = rc ? place(rc[0], rc[1], mv.color) : 'không có trên bàn cờ này.';
+    if (err) {
+      activeVar = null;
+      restoreState(before);
+      setStatus('err', `Không đi được ${esc(name)}: ${NAME[mv.color]} ${mv.point} — ${esc(err)}`);
+      return;
+    }
+  }
+  activeVar = { name, from: v.start.length, before };
+  clearSugg();
+  render();
+  saveSoon();
+  setStatus('ok', `${esc(name)}${v.title ? ' · ' + esc(v.title) : ''}: ${v.moves.length > 1 ? `số 1–${v.moves.length}` : 'số 1'} trên bàn · ↶ Lùi để xem từng nước · tới lượt ${NAME[toPlay]}.`);
+  $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+$('varList').addEventListener('click', e => {
+  const li = e.target.closest('li[data-var]');
+  if (li) showVariation(li.dataset.var);
+});
+$('coachLog').addEventListener('click', e => {
+  const a = e.target.closest('a[data-var]');
+  if (!a) return;
+  e.preventDefault();
+  showVariation(a.dataset.var);
+});
+$('varBack').addEventListener('click', () => {
+  if (!activeVar) return;
+  const st = activeVar.before;
+  activeVar = null;
+  restoreState(st);
+  setStatus('info', 'Đã về thế cờ trước khi xem biến.');
+});
+
 $('coachForm').addEventListener('submit', e => { e.preventDefault(); askCoach($('coachQ').value); });
 $('coachQ').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askCoach($('coachQ').value); }
@@ -1214,15 +1325,98 @@ $('coachSuggest').addEventListener('click', e => {
   }
   askCoach(e.target.textContent);
 });
-$('askForm').addEventListener('submit', e => { e.preventDefault(); ask($('question').value); });
-$('question').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask($('question').value); }
+
+// ---- reviews of the app: public, optionally anonymous; admins read them through the Telegram bot ----
+let rating = 0, me = null;
+const showStars = v => { for (const b of $('stars').children) b.classList.toggle('on', +b.dataset.v <= v); };
+$('stars').addEventListener('click', e => {
+  const v = +e.target.closest('button')?.dataset.v;
+  if (v) { rating = rating === v ? 0 : v; showStars(rating); }
 });
-$('suggest').addEventListener('click', e => { if (e.target.matches('button')) ask(e.target.textContent); });
-$('newChat').onclick = async () => {
-  $('chatlog').innerHTML = '';
-  try { await fetch('api/chat/reset', { method: 'POST', headers: { 'X-Client-Id': clientId } }); } catch (e) {}
-};
+$('stars').addEventListener('mouseover', e => { const v = +e.target.closest('button')?.dataset.v; if (v) showStars(v); });
+$('stars').addEventListener('mouseleave', () => showStars(rating));
+
+const starText = n => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
+async function loadReviews() {
+  try {
+    const j = await apiJson('api/feedback');
+    $('reviewSummary').textContent = j.count ? `· ${j.count} góp ý${j.average ? ` · trung bình ${j.average.toFixed(1)}★` : ''}` : '';
+    $('reviewList').innerHTML = j.reviews.map(r => `
+      <li data-id="${r.id}">
+        <div class="rh"><b>${esc(r.author)}${r.mine ? ' (bạn)' : ''}</b><span class="st">${starText(r.rating)}</span>
+          <span class="muted">${when(r.created_at)}</span>
+          ${r.mine || me?.admin ? '<button type="button" class="del" data-del="1">Xoá</button>' : ''}</div>
+        ${r.text ? `<div class="tx">${esc(r.text)}</div>` : ''}
+        ${r.images ? `<div class="rimgs">${Array.from({ length: r.images }, (_, k) =>
+          `<button type="button" class="ri" data-img="api/feedback/${r.id}/images/${k}"><img src="api/feedback/${r.id}/images/${k}" loading="lazy" alt="Ảnh góp ý ${k + 1}"></button>`).join('')}</div>` : ''}
+      </li>`).join('') || '<li class="muted">Chưa có góp ý nào, hãy là người đầu tiên!</li>';
+  } catch (e) {
+    $('reviewList').innerHTML = `<li style="color:var(--err)">${esc(e.message)}</li>`;
+  }
+}
+$('reviewForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const text = $('reviewText').value.trim();
+  if (!text && !rating && !reviewImgs.length) { setReviewNote('err', 'Hãy chấm sao, viết vài dòng hoặc gửi ảnh góp ý.'); return; }
+  $('reviewBtn').disabled = true;
+  $('reviewBtn').innerHTML = `<span class="spinner"></span>Đang gửi${reviewImgs.length ? ' ảnh' : ''}…`;
+  try {
+    const fd = new FormData();
+    if (rating) fd.append('rating', rating);
+    fd.append('text', text);
+    fd.append('anonymous', $('reviewAnon').checked);
+    reviewImgs.forEach((im, k) => fd.append('images', im.blob, `anh-${k + 1}.jpg`));
+    const r = await fetch('api/feedback', { method: 'POST', headers: { 'X-Client-Id': clientId }, body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    $('reviewText').value = ''; rating = 0; showStars(0); $('reviewAnon').checked = false;
+    reviewImgs.forEach(im => URL.revokeObjectURL(im.url)); reviewImgs = []; showReviewImgs();
+    setReviewNote('ok', 'Cảm ơn bạn đã góp ý!');
+    loadReviews();
+  } catch (err) {
+    setReviewNote('err', esc(err.message));
+  } finally {
+    $('reviewBtn').disabled = false;
+    $('reviewBtn').textContent = 'Gửi góp ý';
+  }
+});
+
+// Photos attached to the review: shrunk on the phone before upload, previewed with a remove button
+let reviewImgs = [];   // [{blob, url}]
+function showReviewImgs() {
+  $('reviewImgs').innerHTML = reviewImgs.map((im, k) =>
+    `<span class="ri"><img src="${im.url}" alt="Ảnh ${k + 1}"><button type="button" class="x" data-rm="${k}" aria-label="Bỏ ảnh">×</button></span>`).join('');
+  $('reviewAddImg').hidden = reviewImgs.length >= 3;
+}
+$('reviewAddImg').addEventListener('click', () => $('reviewFiles').click());
+$('reviewFiles').addEventListener('change', async e => {
+  const files = [...e.target.files].slice(0, 3 - reviewImgs.length);
+  e.target.value = '';
+  for (const f of files) {
+    const blob = await shrink(f);
+    reviewImgs.push({ blob, url: URL.createObjectURL(blob) });
+  }
+  showReviewImgs();
+});
+$('reviewImgs').addEventListener('click', e => {
+  const k = e.target.dataset.rm;
+  if (k === undefined) return;
+  URL.revokeObjectURL(reviewImgs[k].url);
+  reviewImgs.splice(+k, 1);
+  showReviewImgs();
+});
+function setReviewNote(kind, html) {
+  $('reviewForm').querySelector('.applied')?.remove();
+  note($('reviewForm'), html, kind === 'err' ? 'err' : '');
+}
+$('reviewList').addEventListener('click', async e => {
+  const img = e.target.closest('[data-img]');
+  if (img) { openImage(img.dataset.img, 'Ảnh góp ý'); return; }
+  const li = e.target.closest('[data-del]')?.closest('li');
+  if (!li || !confirm('Xoá góp ý này?')) return;
+  try { await apiJson(`api/feedback/${li.dataset.id}`, { method: 'DELETE' }); loadReviews(); }
+  catch (err) { setReviewNote('err', esc(err.message)); }
+});
 
 // The board is always there: enter a game move by move, or photograph a position
 emptyBoard(+$('size').value);

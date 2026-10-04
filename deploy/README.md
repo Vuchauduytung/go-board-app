@@ -46,6 +46,43 @@ gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service=go-sca
   --member=user:EMAIL --role=roles/iap.httpsResourceAccessor
 ```
 
+## Góp ý của người dùng và bot admin Telegram
+
+Tab **⭐ Đánh giá** của app nhận góp ý (sao + lời nhận xét) và hiện công khai cho mọi người. Góp ý ẩn danh không hiện
+tên công khai, nhưng vẫn lưu email người viết để admin đọc. Mỗi góp ý là một file `feedback/<id>.json`, nằm trong bucket
+cạnh `sessions/`.
+
+Admin đọc và quản lý góp ý qua một bot Telegram riêng, bot chỉ trả lời chat id của admin. Các lệnh: `/reviews`,
+`/stats`, `/summary` (AI tổng hợp), `/hide` · `/show` · `/delete <mã>`, hoặc nhắn câu hỏi tự do. Có góp ý mới thì bot
+tự báo. Telegram không đi qua được IAP, nên bot chạy thành service riêng **go-scan-bot**: cùng image, cùng bucket,
+public, chỉ nhận request có đúng secret token đã đăng ký với Telegram.
+
+Cài đặt một lần:
+
+```bash
+# 1. @BotFather → /newbot → lấy token; lưu token và một secret ngẫu nhiên vào Secret Manager
+printf %s "<token>" | gcloud secrets create go-scan-telegram-token --data-file=-
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create go-scan-telegram-secret --data-file=-
+for s in go-scan-telegram-token go-scan-telegram-secret; do
+  gcloud secrets add-iam-policy-binding $s --member=serviceAccount:go-scan-run@$(gcloud config get-value project).iam.gserviceaccount.com \
+    --role=roles/secretmanager.secretAccessor
+done
+# 2. chat id của admin: tạm để một id bất kỳ, deploy, nhắn /start cho bot, bot trả lời id thật
+echo 0 > deploy/telegram_admins.txt
+deploy/gcp.sh bot
+# 3. trỏ webhook của bot vào service (URL lấy từ output của bước 2)
+docker run --rm -e TELEGRAM_BOT_TOKEN="$(gcloud secrets versions access latest --secret=go-scan-telegram-token)" \
+  -e TELEGRAM_WEBHOOK_SECRET="$(gcloud secrets versions access latest --secret=go-scan-telegram-secret)" \
+  -v "$PWD":/app/src -w /app/src go-board-app \
+  python -m telegram_bot set-webhook https://go-scan-bot-<project number>.us-central1.run.app/telegram/webhook
+# 4. nhắn /start cho bot → ghi id nhận được vào deploy/telegram_admins.txt (mỗi dòng một id), rồi
+deploy/gcp.sh app    # deploy lại app (để báo góp ý mới) và bot
+```
+
+Trên VM Oracle: điền `TELEGRAM_*` trong `deploy/oracle/.env`. Caddy cho riêng đường dẫn `/telegram/webhook` đi thẳng
+vào app, không qua oauth2-proxy. Webhook là `https://<DOMAIN>/telegram/webhook`. Nếu dùng Cloudflare Access thì thêm
+policy **Bypass** cho đường dẫn đó.
+
 ## Thêm / cập nhật sách
 
 1. Đặt file vào `books/src/Go Books/…`, khai báo trong `rag/catalog.py` (sách scan: chạy `scripts/ocr-books.sh` trước).

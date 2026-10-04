@@ -291,3 +291,39 @@ def clean_actions(actions, n):
         elif t == 'restart':
             out.append({'type': t})
     return out
+
+
+VAR_RE = re.compile(r'\[\s*var\s*(\d+)\s*\]|\bvar\s?(\d+)\b', re.I)
+
+
+def clean_variations(variations, n, played, first, answer):
+    """Variations named in a coach answer, renamed Var<first>, Var<first + 1>… so names stay unique in a session,
+    each with `start`: the entries of `played` (the board's [{r, c, color}]) its first move is played after.
+    -> (variations, answer with [VarN] rewritten to the new names); the browser checks legality."""
+    out, names = [], {}
+    for v in (variations if isinstance(variations, list) else [])[:20]:
+        if not isinstance(v, dict):
+            continue
+        moves = [{'color': m['color'], 'point': str(m['point']).strip().upper()} for m in v.get('moves') or []
+                 if isinstance(m, dict) and m.get('color') in NAMES and parse_point(m.get('point', ''), n)][:30]
+        local = VAR_RE.fullmatch(str(v.get('name') or '').strip())
+        if not moves or not local or (local.group(1) or local.group(2)) in names:
+            continue
+        keep = v.get('from_move')
+        start = list(played)
+        if isinstance(keep, int) and keep >= 0:
+            k, cut = 0, len(played)
+            for i, p in enumerate(played):   # like back_to: drop from the (keep + 1)th placed stone on
+                if p.get('color') and (k := k + 1) > keep:
+                    cut = i
+                    break
+            start = start[:cut]
+        name = f'Var{first + len(out)}'
+        names[local.group(1) or local.group(2)] = name
+        out.append({'name': name, 'title': str(v.get('title') or '').strip()[:80], 'start': start, 'moves': moves})
+
+    def rename(m):   # earlier variations of the session keep their names
+        k = m.group(1) or m.group(2)
+        new = names.get(k) or (f'Var{k}' if 0 < int(k) < first else None)
+        return f'[{new}]' if new else m.group(0).strip('[] ')
+    return out, VAR_RE.sub(rename, answer)

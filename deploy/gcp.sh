@@ -2,7 +2,8 @@
 # Build, push and deploy Go Scan to Cloud Run (us-central1).
 #
 #   deploy/gcp.sh            build both images with a new tag and deploy both services
-#   deploy/gcp.sh app        only the app
+#   deploy/gcp.sh app        only the app (and the admin bot, which runs the same image)
+#   deploy/gcp.sh bot        only the admin bot go-scan-bot, on the image the app is serving
 #   deploy/gcp.sh katago     only KataGo (Modal GPU when the go-scan-modal-token secret exists, else Cloud Run CPU)
 #   deploy/gcp.sh cleanup    only delete old revisions and images (also done after every deploy)
 #
@@ -32,24 +33,39 @@ if has_secret go-scan-modal-token; then
   katago_env="KATAGO_URL=$MODAL_KATAGO_URL|KATAGO_AUTH=modal"
   secrets+=",KATAGO_MODAL_TOKEN=go-scan-modal-token:latest"
 fi
+# Admin Telegram bot (telegram_bot.py): needs secrets go-scan-telegram-token and go-scan-telegram-secret and the
+# admins' chat ids in deploy/telegram_admins.txt (one per line, not in git). The app only uses them to notify.
+tg_admins=$(grep -v '^\s*#' deploy/telegram_admins.txt 2>/dev/null | tr -d ' \r' | grep . | paste -sd, || true)
+bot=no
+if has_secret go-scan-telegram-token && has_secret go-scan-telegram-secret && [[ -n $tg_admins ]]; then
+  bot=yes
+  secrets+=",TELEGRAM_BOT_TOKEN=go-scan-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=go-scan-telegram-secret:latest"
+fi
 # Optional fallback LLM providers (rag/llm.py): used when their secret exists
 for pair in GROQ_API_KEY:go-scan-groq-api-key OPENROUTER_API_KEY:go-scan-openrouter-api-key \
-            MISTRAL_API_KEY:go-scan-mistral-api-key GITHUB_MODELS_TOKEN:go-scan-github-models-token; do
+            MISTRAL_API_KEY:go-scan-mistral-api-key; do
   has_secret "${pair#*:}" && secrets+=",${pair%%:*}=${pair#*:}:latest"
 done
 
 # Keep only the revisions serving traffic and their images: Artifact Registry is free up to 0.5 GB per billing
 # account and every deploy pushes ~1.2 GB, so older images would be billed.
-cleanup() {   # service, image name in $REPO
-  local service=$1 image=$REPO/$2 keep digests r d
-  keep=$(gcloud run services describe "$service" --project="$PROJECT" --region=$REGION \
-    --format='value(status.traffic.revisionName)' | tr ';' ' ')
-  [[ -n $keep ]] || { echo "cleanup $service: no revision serving traffic, nothing deleted"; return; }
+serving() {   # revisions of a service serving traffic (none when the service does not exist)
+  gcloud run services describe "$1" --project="$PROJECT" --region=$REGION \
+    --format='value(status.traffic.revisionName)' 2>/dev/null | tr ';' ' '
+}
+cleanup() {   # image name in $REPO, then the services running it
+  local image=$REPO/$1 keep="" digests="" service k r d
+  shift
+  for service in "$@"; do
+    k=$(serving "$service")
+    [[ -n $k || $service != "$1" ]] || { echo "cleanup $service: no revision serving traffic, nothing deleted"; return; }
+    for r in $(gcloud run revisions list --service="$service" --project="$PROJECT" --region=$REGION --format='value(metadata.name)' 2>/dev/null); do
+      [[ " $k " == *" $r "* ]] || gcloud run revisions delete "$r" --project="$PROJECT" --region=$REGION --quiet
+    done
+    keep+=" $k"
+  done
   digests=$(for r in $keep; do gcloud run revisions describe "$r" --project="$PROJECT" --region=$REGION \
     --format='value(status.imageDigest)' | sed 's/.*@//'; done)
-  for r in $(gcloud run revisions list --service="$service" --project="$PROJECT" --region=$REGION --format='value(metadata.name)'); do
-    [[ " $keep " == *" $r "* ]] || gcloud run revisions delete "$r" --project="$PROJECT" --region=$REGION --quiet
-  done
   for d in $(gcloud artifacts docker images list "$image" --format='value(version)'); do
     grep -qx "$d" <<<"$digests" || gcloud artifacts docker images delete "$image@$d" --delete-tags --quiet
   done
@@ -73,10 +89,26 @@ if [[ $what == all || $what == app ]]; then
     --cpu=2 --memory=4Gi --min-instances=0 --max-instances=1 --concurrency=4 --timeout=180 --cpu-boost \
     --port=8000 --execution-environment=gen2 \
     --add-volume=name=data,type=cloud-storage,bucket="$PROJECT-go-scan" --add-volume-mount=volume=data,mount-path=/data \
-    --set-env-vars="^|^DATA_DIR=/data/scans|SESSIONS_DIR=/data/sessions|BOOK_PAGES_DIR=/data/books/pages|$katago_env|TRUST_IAP_HEADER=1|ADMIN_EMAILS=$admins|QDRANT_URL=$QDRANT_URL" \
+    --set-env-vars="^|^DATA_DIR=/data/scans|SESSIONS_DIR=/data/sessions|BOOK_PAGES_DIR=/data/books/pages|$katago_env|TRUST_IAP_HEADER=1|ADMIN_EMAILS=$admins|QDRANT_URL=$QDRANT_URL|TELEGRAM_ADMIN_IDS=$tg_admins" \
     --set-secrets="$secrets" \
     | { grep -v QDRANT_URL || true; }
 fi
 
-if [[ ($what == all || $what == katago || $what == cleanup) && $katago_env != *modal* ]]; then cleanup go-katago katago-cpu; fi
-if [[ $what == all || $what == app || $what == cleanup ]]; then cleanup go-scan app; fi
+# The bot: the same image, public (Telegram must reach its webhook; requests are checked against the secret token)
+if [[ ($what == all || $what == app || $what == bot) && $bot == yes ]]; then
+  image=$(gcloud run services describe go-scan --project="$PROJECT" --region=$REGION \
+    --format='value(spec.template.spec.containers[0].image)')
+  gcloud run deploy go-scan-bot --project="$PROJECT" --region=$REGION --image="$image" \
+    --service-account="go-scan-run@$PROJECT.iam.gserviceaccount.com" --allow-unauthenticated \
+    --command=uvicorn --args=telegram_bot:app,--host,0.0.0.0,--port,8000 \
+    --cpu=1 --memory=1Gi --min-instances=0 --max-instances=1 --concurrency=4 --timeout=120 --port=8000 \
+    --execution-environment=gen2 \
+    --add-volume=name=data,type=cloud-storage,bucket="$PROJECT-go-scan" --add-volume-mount=volume=data,mount-path=/data \
+    --set-env-vars="^|^DATA_DIR=/data/scans|SESSIONS_DIR=/data/sessions|TELEGRAM_ADMIN_IDS=$tg_admins" \
+    --set-secrets="$secrets"
+elif [[ $what == bot ]]; then
+  echo "Bot not configured: create secrets go-scan-telegram-token / go-scan-telegram-secret and deploy/telegram_admins.txt"
+fi
+
+if [[ ($what == all || $what == katago || $what == cleanup) && $katago_env != *modal* ]]; then cleanup katago-cpu go-katago; fi
+if [[ $what == all || $what == app || $what == bot || $what == cleanup ]]; then cleanup app go-scan go-scan-bot; fi

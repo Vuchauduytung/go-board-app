@@ -1,8 +1,9 @@
 # Text generation over a chain of free LLM providers: the first one that answers wins; an overloaded model, a
 # used-up free quota or any other error moves on to the next. Providers without an API key are skipped.
-# Gemini goes through google-genai; Groq, OpenRouter, Mistral and GitHub Models share the OpenAI chat API.
+# Gemini goes through google-genai; Groq, OpenRouter and Mistral share the OpenAI chat API.
+# (GitHub Models was retired on 2026-07-30.)
 #
-#   LLM_CHAIN_BOARD / LLM_CHAIN_BOOKS / LLM_CHAIN_TRANSLATE = "provider:model,provider:model,..."
+#   LLM_CHAIN_BOARD / LLM_CHAIN_BOOKS / LLM_CHAIN_TRANSLATE / LLM_CHAIN_FEEDBACK = "provider:model,provider:model,..."
 
 import json
 import logging
@@ -18,20 +19,22 @@ OPENAI_COMPATIBLE = {   # provider -> (chat completions URL, API key variable)
     'groq': ('https://api.groq.com/openai/v1/chat/completions', 'GROQ_API_KEY'),
     'openrouter': ('https://openrouter.ai/api/v1/chat/completions', 'OPENROUTER_API_KEY'),
     'mistral': ('https://api.mistral.ai/v1/chat/completions', 'MISTRAL_API_KEY'),
-    'github': ('https://models.github.ai/inference/chat/completions', 'GITHUB_MODELS_TOKEN'),
 }
 KEYS = {'gemini': 'GEMINI_API_KEY', **{p: v[1] for p, v in OPENAI_COMPATIBLE.items()}}
 
 CHAINS = {
     # explaining positions: the strongest free models first
     'board': 'gemini:gemini-3.5-flash,gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-120b,'
-             'mistral:mistral-medium-latest,github:openai/gpt-4.1-mini,openrouter:deepseek/deepseek-chat-v3.1:free',
+             'openrouter:qwen/qwen3.8-27b:free,mistral:mistral-medium-latest',
     'books': 'gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,'
-             'mistral:mistral-small-latest,github:openai/gpt-4.1-mini',
-    'translate': 'gemini:gemini-3.5-flash-lite,groq:llama-3.1-8b-instant,mistral:mistral-small-latest',
+             'openrouter:qwen/qwen3.8-27b:free,mistral:mistral-small-latest',
+    'translate': 'gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-20b,mistral:mistral-small-latest',
+    # the admin bot summarising user reviews (telegram_bot.py)
+    'feedback': 'gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,'
+                'mistral:mistral-small-latest',
 }
 # Gemini 3 models think before answering, out of the same output budget: a little for positions, none otherwise
-THINKING = {'board': 'low', 'books': 'minimal', 'translate': 'minimal'}
+THINKING = {'board': 'low', 'books': 'minimal', 'translate': 'minimal', 'feedback': 'minimal'}
 TIMEOUT = 60
 
 
@@ -95,7 +98,9 @@ def _call_openai(provider, model, system, messages, max_tokens, schema, temperat
         body['response_format'] = {'type': 'json_object'}
     if temperature is not None:
         body['temperature'] = temperature
-    headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + os.environ[KEYS[provider]]}
+    # Groq sits behind Cloudflare, which rejects urllib's default User-Agent (error 1010)
+    headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + os.environ[KEYS[provider]],
+               'User-Agent': 'go-scan/1.0'}
     if provider == 'openrouter':
         headers['X-Title'] = 'Go Scan'
     req = urllib.request.Request(url, json.dumps(body).encode(), headers)
