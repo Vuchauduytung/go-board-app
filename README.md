@@ -20,7 +20,7 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   xem [deploy/oracle/README.md](deploy/oracle/README.md).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
   tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi, nên chạy được cả trên Cloud Run).
-- AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → Mistral → GitHub Models → OpenRouter), xem
+- AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → OpenRouter → Mistral), xem
   [deploy/LLM_PROVIDERS.md](deploy/LLM_PROVIDERS.md).
 - KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~21 lượt/s trên Cloud Run CPU):
   `modal deploy katago/modal_katago.py`, rồi đặt `KATAGO_URL`, `KATAGO_AUTH=modal`, `KATAGO_MODAL_TOKEN` cho app.
