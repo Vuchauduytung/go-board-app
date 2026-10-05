@@ -5,13 +5,16 @@ lỗi thì chuyển sang model sau; nhà cung cấp chưa có key thì bỏ qua.
 
 | Việc | Chuỗi (`LLM_CHAIN_*`) |
 |---|---|
-| Giải thích thế cờ (`BOARD`) | gemini-3.5-flash → gemini-3.5-flash-lite → Groq gpt-oss-120b → OpenRouter qwen3.8-27b (free) → Mistral medium |
-| Hỏi sách (`BOOKS`) | gemini-3.5-flash-lite → gemini-3.5-flash → Groq gpt-oss-120b → OpenRouter qwen3.8-27b (free) → Mistral small |
-| Dịch câu hỏi để tìm sách (`TRANSLATE`) | gemini-3.5-flash-lite → Groq gpt-oss-20b → Mistral small |
+| Giải thích thế cờ (`BOARD`) | gemini-3.5-flash → gemini-3.5-flash-lite → Groq gpt-oss-120b → OpenRouter gemma-4-31b → nemotron-3-ultra (free) → Mistral medium → ministral-14b |
+| Hỏi sách (`BOOKS`) | gemini-3.5-flash-lite → gemini-3.5-flash → Groq gpt-oss-120b → OpenRouter gemma-4-31b → nemotron-3-ultra (free) → Mistral small → ministral-14b |
+| Dịch câu hỏi để tìm sách (`TRANSLATE`) | gemini-3.5-flash-lite → Groq gpt-oss-20b → Mistral small → ministral-14b |
 
 Thử ngày 2026-10-04 với câu hỏi cờ vây tiếng Việt: Groq gpt-oss-120b nhanh nhất (~1 s) nhưng giải thích chung chung hơn;
-OpenRouter `qwen/qwen3.8-27b:free` giải thích đúng ý nhất nhưng chậm (~7 s) và chỉ 50 lượt/ngày. **GitHub Models đã
-ngừng hoạt động từ 2026-07-30** nên không còn trong chuỗi.
+OpenRouter `qwen/qwen3.8-27b:free` giải thích đúng ý nhất nhưng đến 2026-10-06 đã hết bản miễn phí, thay bằng
+`google/gemma-4-31b-it:free` (hay bị giới hạn chung, báo 429 ngay) rồi `nvidia/nemotron-3-ultra-550b-a55b:free` (tiếng
+Việt tốt nhưng chậm, 15–30 s; bản `nemotron-3-super` trả lời lẫn tiếng nước ngoài). Mistral giới hạn lượt theo từng
+model: khi `mistral-medium`/`mistral-small` báo 429 thì `ministral-14b-latest` thường vẫn trả lời được. **GitHub
+Models đã ngừng hoạt động từ 2026-07-30** nên không còn trong chuỗi.
 
 Đổi chuỗi bằng biến môi trường, ví dụ `LLM_CHAIN_BOARD=gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b`. Tên model
 của các nhà cung cấp thay đổi theo thời gian: sau khi thêm key, chạy kiểm tra ở cuối trang.

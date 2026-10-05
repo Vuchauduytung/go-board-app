@@ -46,6 +46,8 @@ Mua tên miền (~10 USD/năm, ví dụ Cloudflare Registrar) chỉ cần khi mu
 4. Networking: để mặc định (tạo VCN mới, **Assign a public IPv4 address**).
 5. SSH keys: *Generate a key pair for me* → **tải cả private key** (hoặc dán public key của bạn).
 6. Boot volume: 100 GB.
+   Tuỳ chọn: Show advanced options → Management → **Paste cloud-init script**, dán nội dung
+   `deploy/oracle/cloud-init.sh` (mở cổng 80/443, swap, Docker, `/srv/go-scan`) để bỏ qua phần cài đặt ở bước 3.
 7. Create. Báo "Out of host capacity" thì đổi Availability Domain, hoặc thử lại vào giờ khác.
 8. Ghi lại **Public IP address** ở trang chi tiết VM.
 
@@ -62,7 +64,7 @@ chmod 600 ~/Downloads/ssh-key-*.key
 ssh -i ~/Downloads/ssh-key-*.key ubuntu@<IP>
 
 # tường lửa của image Oracle: cho phép 80/443 và lưu lại
-sudo iptables -I INPUT 6 -p tcp -m state --state NEW -m multiport --dports 80,443 -j ACCEPT
+sudo iptables -I INPUT $(sudo iptables -L INPUT --line-numbers -n | awk '$2 == "REJECT" {print $1; exit}') -p tcp -m state --state NEW -m multiport --dports 80,443 -j ACCEPT
 sudo netfilter-persistent save
 # Docker
 curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker ubuntu && exit

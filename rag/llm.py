@@ -25,13 +25,16 @@ KEYS = {'gemini': 'GEMINI_API_KEY', **{p: v[1] for p, v in OPENAI_COMPATIBLE.ite
 CHAINS = {
     # explaining positions: the strongest free models first
     'board': 'gemini:gemini-3.5-flash,gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-120b,'
-             'openrouter:qwen/qwen3.8-27b:free,mistral:mistral-medium-latest',
+             'openrouter:google/gemma-4-31b-it:free,openrouter:nvidia/nemotron-3-ultra-550b-a55b:free,'
+             'mistral:mistral-medium-latest,mistral:ministral-14b-latest',
     'books': 'gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,'
-             'openrouter:qwen/qwen3.8-27b:free,mistral:mistral-small-latest',
-    'translate': 'gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-20b,mistral:mistral-small-latest',
+             'openrouter:google/gemma-4-31b-it:free,openrouter:nvidia/nemotron-3-ultra-550b-a55b:free,'
+             'mistral:mistral-small-latest,mistral:ministral-14b-latest',
+    'translate': 'gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-20b,mistral:mistral-small-latest,'
+                 'mistral:ministral-14b-latest',
     # the admin bot summarising user reviews (telegram_bot.py)
     'feedback': 'gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,'
-                'mistral:mistral-small-latest',
+                'mistral:mistral-small-latest,mistral:ministral-14b-latest',
 }
 # Gemini 3 models think before answering, out of the same output budget: a little for positions, none otherwise
 THINKING = {'board': 'low', 'books': 'minimal', 'translate': 'minimal', 'feedback': 'minimal'}

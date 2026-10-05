@@ -28,3 +28,6 @@ deploy/telegram_admins.txt
 
 # Allowed sign-in e-mails for the Oracle deployment
 deploy/oracle/emails.txt
+
+# Oracle VM SSH keys (private)
+oracle-cloud/
