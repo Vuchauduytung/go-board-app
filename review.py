@@ -119,16 +119,21 @@ def _line(katago, game, i, pv):
 
 
 def extend_line(katago, game, i, line, count=LINE):
-    """The next `count` moves of the best variation `line` from the position before move i: KataGo's best line from
-    where `line` ends, searched again from its end until long enough. Fewer (or none) when the game ends."""
-    base, first = position(game, i), game['moves'][i][0]
+    """The next `count` moves of the best variation `line` from the position before move i of the game."""
+    return extend_from(katago, position(game, i), game['moves'][i][0], line, count)
+
+
+def extend_from(katago, base, first, line, count=LINE):
+    """The next `count` moves of the best variation `line` (first played by `first`) from the KataGo position `base`:
+    KataGo's best line from where `line` ends, searched again from its end until long enough. Fewer (or none) when
+    the game ends."""
     out = []
     for _ in range(4):
         moves = line + out
         if len(out) >= count or moves[-2:] == ['pass', 'pass']:
             break
         colored = [[first if k % 2 == 0 else coach.OTHER[first], mv] for k, mv in enumerate(moves)]
-        res = katago({**base, 'moves': base['moves'] + colored, 'max_visits': LINE_VISITS, 'top': 1,
+        res = katago({**base, 'moves': base.get('moves', []) + colored, 'max_visits': LINE_VISITS, 'top': 1,
                       'ownership': False})
         if not res['moves'] or not res['moves'][0]['pv']:
             break

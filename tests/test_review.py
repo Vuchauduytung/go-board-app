@@ -135,3 +135,15 @@ def test_best_line_grows_in_batches_and_is_kept(storage):
     assert stored['line'] == line + more
     sessions.set_mistake_line('u', s['id'], m['number'], ['A1'] * 30)   # not a longer version: ignored
     assert sessions.get('u', s['id'])['review']['mistakes']['B'][0]['line'] == line + more
+
+
+def test_best_line_from_any_position():
+    kg = FakeKataGo()
+    base = {'matrix': [[0] * 9 for _ in range(9)], 'to_play': 'W', 'komi': 7.5}
+    first = review.extend_from(kg, base, 'W', [], 10)
+    assert len(first) == 10
+    more = review.extend_from(kg, base, 'W', first, 10)
+    assert len(more) == 10
+    last = kg.calls
+    review.extend_from(kg, base, 'W', first + ['pass', 'pass'], 10)   # the game is over: nothing more to search
+    assert kg.calls == last

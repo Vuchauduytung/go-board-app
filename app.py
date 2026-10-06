@@ -736,6 +736,35 @@ def review_line(sid: str, body: LineIn, user: str = Depends(current_user)):
     return {'moves': more}
 
 
+class BestLineIn(BaseModel):
+    matrix: List[List[int]]   # the position the line starts from
+    to_play: str              # who plays its first move
+    komi: float = 7.5
+    line: List[str] = []      # moves known so far ("Q16" | "pass")
+    count: int = 10
+    session_id: Optional[str] = None
+
+
+@app.post('/api/line')
+def best_line(body: BestLineIn, user: str = Depends(current_user)):
+    """The next moves of KataGo's best line from a position, for "▶ follows KataGo": the browser asks again for
+    more as the user steps through it."""
+    _check_board(body.matrix, body.to_play)
+    _own_session(user, body.session_id)
+    n = len(body.matrix)
+    if len(body.line) >= review.LINE_MAX or any(mv != 'pass' and coach.parse_point(mv, n) is None for mv in body.line):
+        raise HTTPException(400, 'Biến không hợp lệ')
+    base = {'matrix': body.matrix, 'to_play': body.to_play, 'komi': body.komi}
+    try:
+        more = review.extend_from(_katago_for(user, body.session_id), base, body.to_play, body.line,
+                                  max(1, min(body.count, 20)))
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    except KataGoError as ex:
+        raise HTTPException(ex.status, str(ex))
+    return {'moves': more}
+
+
 @app.get('/api/books/{book_id}/pages/{page}')
 def book_page(book_id: str, page: int):
     from rag.catalog import BY_ID

@@ -160,6 +160,9 @@
   a.var.on { background: var(--accent); color: #fff; text-decoration: none; padding: 0 3px; }
   .vars h3 button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
                     padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .follow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+  .follow .seg button { padding: 7px 10px; font-size: 14px; }
+  #followHint { font-size: 12px; margin: -2px 0 8px; }
   .nav { display: flex; gap: 6px; }
   .nav button { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
                 padding: 11px 0; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: -2px; }
@@ -269,6 +272,14 @@
         <button type="button" data-p="W">⚪ Tới Trắng</button>
       </div>
     </div>
+    <div class="follow">
+      <span class="muted">Khi bấm ▶</span>
+      <div class="seg" id="followSeg">
+        <button type="button" data-f="branch" class="on">🌳 Theo nhánh</button>
+        <button type="button" data-f="kata">🤖 Theo KataGo</button>
+      </div>
+    </div>
+    <div class="muted" id="followHint"></div>
     <div class="nav" id="navBar">
       <button type="button" id="navFirst" title="Về thế cờ ban đầu (Home)">⏮</button>
       <button type="button" id="navBack10" title="Lùi 10 nước">◀◀</button>
@@ -377,7 +388,8 @@ const $ = id => document.getElementById(id);
 let scan = null;      // starting position: response of /api/recognize, or an empty board ({id: null, matrix})
 let session = null;   // review session on screen: {id, title, pinned}; created on the first change
 let game = null;      // game record of a session imported from SGF: {moves: [["B", "Q16" | "pass"]], komi, …}
-let reviewLine = null; // a review mistake's best variation over the board, see "best variation window" below
+let kataLine = null; // KataGo's best line over the board, see "follow KataGo" below
+let followMode = 'branch'; // what ▶ ▶▶ ⏭ follow: 'branch' (the lit line of the tree) or 'kata' (KataGo's best moves)
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
 let sugg = null;      // response of /api/analyze for the current matrix + toPlay
@@ -444,7 +456,7 @@ function startBoard(start) {
   matrix = clone(start.matrix);
   played = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
   tree = newNode(null, null); cur = tree;
-  reviewLine = null;
+  kataLine = null; followMode = 'branch';
   session = null;
   game = null;
   clearSugg();
@@ -500,20 +512,27 @@ function render() {
     h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
   }
   if (activeVar && played.length < activeVar.from) activeVar = null;   // taken back past the variation's start
-  let moveNo = 0;
-  played.forEach((p, i) => {   // number the placed stones still on the board (not under a review variation)
-    if (!p.color || reviewLine || (activeVar && i < activeVar.from)) return;   // a variation counts from its 1st move
-    moveNo++;
-    if (matrix[p.r][p.c] !== p.color || played.slice(i + 1).some(q => q.r === p.r && q.c === p.c)) return;
-    h += `<text x="${m + p.c * s}" y="${m + p.r * s + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${moveNo}</text>`;
-  });
+  // numbers on the last LAST_NUMBERED moves only, as numbered in the game (a coach variation: from its 1st move)
+  const nums = moveNumbers(), lastI = played.map(p => !!p.color).lastIndexOf(true);
+  let shown = 0;
+  for (let i = played.length - 1; i >= 0 && shown < LAST_NUMBERED; i--) {
+    const p = played[i];
+    if (!p.color || (activeVar && i < activeVar.from)) continue;
+    shown++;
+    if (matrix[p.r][p.c] !== p.color || played.slice(i + 1).some(q => q.r === p.r && q.c === p.c)) continue;
+    const x = m + p.c * s, y = m + p.r * s, no = activeVar ? i - activeVar.from + 1 : nums[i];
+    if (i === lastI) h += `<circle cx="${x}" cy="${y}" r="15.5" fill="none" stroke="var(--accent)" stroke-width="2.5" pointer-events="none"/>`;
+    h += `<text x="${x}" y="${y + 4}" font-size="${no > 99 ? 10 : 12}" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${no}</text>`;
+  }
   for (const k of coachMarks) {
     const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
     h += `<rect x="${m + k.col * s - 14}" y="${m + k.row * s - 14}" width="28" height="28" rx="6" fill="none" stroke="${col}" stroke-width="3" stroke-dasharray="5 3" pointer-events="none"/>`;
   }
-  if (reviewLine && lineOffset(reviewLine) < 0) leaveLine();   // the board left the variation
-  if (reviewLine) {   // the next WINDOW moves of the best variation, numbered from 1, over the position reached
-    const rl = reviewLine, k = rl.k = lineOffset(rl), st = lineStones(rl);
+  if (kataLine && followMode !== 'kata') leaveLine();
+  if (followMode === 'kata' && (!kataLine || lineOffset(kataLine) < 0          // left the line: KataGo's from here
+      || (!kataLine.number && lineOffset(kataLine) === 0 && kataLine.first !== toPlay))) newKataLine();   // side changed
+  if (kataLine) {   // the next WINDOW moves of KataGo's line, numbered from 1, over the position reached
+    const rl = kataLine, k = rl.k = lineOffset(rl), st = lineStones(rl);
     rl.window = [];
     for (let i = 0; i < WINDOW && k + i < st.length; i++) {
       const e = st[k + i];
@@ -549,7 +568,13 @@ function updateModeUI() {
     : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>chạm giữ</b> một quân để xoá · <b>◀</b> để lùi; đi khác sau khi lùi sẽ mở nhánh mới.`;
   for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
   for (const id of ['navFirst', 'navBack10', 'undo']) $(id).disabled = !cur.parent;
-  for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = !cur.sel && !onLineEnd();
+  const kataMore = followMode === 'kata' && kataLine && !(kataLine.ended && kataLine.k >= kataLine.moves.length);
+  for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = followMode === 'kata' ? !kataMore : !cur.sel;
+  for (const b of $('followSeg').children) b.classList.toggle('on', b.dataset.f === followMode);
+  const kl = kataLine;
+  $('followHint').textContent = followMode === 'branch' ? '▶ đi theo nhánh đang sáng trong cây nước đi.'
+    : !kl ? '' : kl.k < kl.moves.length ? `▶ đi nước tốt nhất của KataGo · đã tính trước ${kl.moves.length - kl.k} nước${kl.fetching ? ', đang tính thêm…' : ''}.`
+    : kl.ended ? 'KataGo: hết biến (ván đã kết thúc).' : kl.error ? `KataGo chưa trả lời: ${kl.error}` : 'KataGo đang tính nước tốt nhất…';
   $('cutBranch').disabled = !cur.parent;
   if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
 }
@@ -623,8 +648,10 @@ $('board').addEventListener('click', e => {
     render();
     return;
   }
-  const hit = reviewLine?.window?.find(w => w.r === r && w.c === c);
-  if (hit) { playLineTo(hit.idx); return; }   // a numbered move of the best variation: go on along it
+  const cand = sugg?.moves.find(mv => mv.row === r && mv.col === c);
+  if (cand) { followCandidate(cand); return; }   // a suggestion of 💡 Gợi ý: play it, then ▶ follows KataGo
+  const hit = kataLine?.window?.find(w => w.r === r && w.c === c);
+  if (hit) { playLineTo(hit.idx); return; }   // a numbered move of KataGo's line: go on along it
   const who = toPlay;
   const err = place(r, c, who);
   if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ◀ để lùi.' : '')); return; }
@@ -735,7 +762,7 @@ function goTo(node) {
     : `Nước ${depthOf(node)}: nhấc quân ở ${pointName(m.r, m.c)}.`);
 }
 function step(n) {
-  if (n > 0 && onLineEnd()) { playLineTo(Math.min(reviewLine.k + n, reviewLine.moves.length) - 1); return; }
+  if (n > 0 && followMode === 'kata') { kataStep(n); return; }
   let node = cur;
   for (let i = 0; i < Math.abs(n); i++) {
     const next = n < 0 ? node.parent : node.sel;
@@ -749,7 +776,11 @@ $('navBack10').addEventListener('click', () => step(-10));
 $('undo').addEventListener('click', () => step(-1));
 $('redo').addEventListener('click', () => step(1));
 $('navFwd10').addEventListener('click', () => step(10));
-$('navLast').addEventListener('click', () => onLineEnd() ? playLineTo(reviewLine.moves.length - 1) : goTo(litLeaf(cur)));
+$('navLast').addEventListener('click', () => followMode === 'kata' ? kataStep(Infinity) : goTo(litLeaf(cur)));
+$('followSeg').addEventListener('click', e => {
+  const f = e.target.closest('button')?.dataset.f;
+  if (f && f !== followMode) setFollow(f);
+});
 document.addEventListener('keydown', e => {
   if ($('tab-scan').hidden || e.target.closest('input, textarea, select') || e.altKey || e.ctrlKey || e.metaKey) return;
   const act = { ArrowLeft: () => step(e.shiftKey ? -10 : -1), ArrowRight: () => step(e.shiftKey ? 10 : 1),
@@ -1150,17 +1181,20 @@ $('mistakes').addEventListener('click', e => {
     return;
   }
   if (act === 'played') {
+    followMode = 'branch';
     gotoGameMove(m.number);
     setStatus('info', `Thế cờ sau nước ${m.number} (${NAME[m.color]} ${m.move}) trong ván gốc.`);
     return;
   }
   if (act === 'ask') {
+    followMode = 'branch';
     gotoGameMove(m.number);
     askCoach(`Nước thứ ${m.number} (${NAME[m.color]} ${m.move}) sai ở đâu? Vì sao ${m.best} tốt hơn, và biến ${m.line.slice(0, 6).join(' ')} diễn ra thế nào?`);
     return;
   }
   gotoGameMove(m.number - 1);
-  reviewLine = { m, moves: m.line, first: m.color, number: m.number, base: played.slice(), sid: session.id };
+  followMode = 'kata';
+  kataLine = { m, moves: m.line, first: m.color, number: m.number, base: played.slice(), sid: session.id, k: 0 };
   document.querySelectorAll('#mistakes li').forEach(x => {
     x.classList.toggle('on', x === li);
     x.querySelector('.acts')?.remove();
@@ -1172,16 +1206,66 @@ $('mistakes').addEventListener('click', e => {
     '<button class="src" type="button" data-act="ask">💬 Hỏi trợ lý về lỗi này</button>';
   li.appendChild(acts);
   render();
-  setStatus('info', `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${Math.min(WINDOW, m.line.length)} trên bàn là biến tốt nhất bắt đầu bằng ${m.best}. Chạm số 1 (hoặc số bất kỳ) để đi tiếp theo biến.`);
+  setStatus('info', `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${Math.min(WINDOW, m.line.length)} viền xanh là biến tốt nhất bắt đầu bằng ${m.best}: chạm một số hoặc bấm ▶ để đi theo.`);
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 
-// ---- best variation window: the board shows the next WINDOW moves of a mistake's best variation, numbered from 1.
-// Tapping one of them plays the variation up to it and the window slides on, so a new move comes in as number
-// WINDOW. More of the variation is searched in batches of BATCH moves while at most AHEAD known moves are left
-// (10 known at first → 20 at once; at move 5 → 30, at move 15 → 40…), and kept with the mistake. ◀ / ▶ and the
-// tree move along it too; any other move leaves it. ----
-const WINDOW = 10, BATCH = 10, AHEAD = 15;
+// ---- follow KataGo: the board shows the next WINDOW moves of KataGo's best line from where the line started, numbered
+// from 1 (green). ▶ ▶▶ ⏭ (or a tap on a number) play along it and the window slides on, so a new move comes in as
+// number WINDOW. More of the line is searched in batches of BATCH moves while at most AHEAD known moves are left (at
+// first 20 at once; at move 5 → 30, at move 15 → 40…). A move off the line starts a new line from there. A review
+// mistake's line is the same, kept with the mistake (/review/line); any other comes from /api/line. ----
+const WINDOW = 10, BATCH = 10, AHEAD = 15, LAST_NUMBERED = 10;
+
+// Each entry of `played` with its number in the game: the game record's own numbers (passes count) while on its
+// main line, then counting on; a photographed position starts at 1
+function moveNumbers() {
+  const out = [], line = game ? gameStones(game.moves) : [];
+  let n = 0, onGame = !!game, gi = 0;
+  played.forEach((p, i) => {
+    if (!p.color) { out.push(null); onGame = false; return; }
+    if (onGame && i < line.length && sameMove(p, line[i])) {
+      while (game.moves[gi][1] === 'pass') gi++;
+      n = ++gi;
+    } else { onGame = false; n++; }
+    out.push(n);
+  });
+  return out;
+}
+
+function setFollow(f) {
+  followMode = f;
+  if (f === 'branch') leaveLine();
+  render();
+  setStatus('info', f === 'kata' ? '🤖 Theo KataGo: ▶ đi nước tốt nhất, các số 1–10 viền xanh là biến KataGo tính trước.'
+                                 : '🌳 Theo nhánh: ▶ đi theo nhánh đang sáng trong cây nước đi.');
+}
+
+// KataGo's line from the position on screen (searched as soon as it is drawn)
+function newKataLine(moves = []) {
+  leaveLine();
+  kataLine = { moves: moves.slice(), first: toPlay, base: played.slice(), k: 0, matrix: clone(matrix) };
+}
+
+// A candidate of 💡 Gợi ý: follow KataGo from here along that candidate's own line
+function followCandidate(cand) {
+  followMode = 'kata';
+  newKataLine(cand.pv);
+  clearSugg();
+  playLineTo(0);
+}
+
+// ▶ (n = 1), ▶▶ (10), ⏭ (Infinity) when following KataGo: moves not searched yet are played once they come
+function kataStep(n) {
+  const kl = kataLine;
+  if (!kl) return;
+  const target = kl.k + n - 1;
+  if (kl.k < kl.moves.length) playLineTo(Math.min(target, kl.moves.length - 1));
+  if (kataLine === kl && Number.isFinite(n) && kl.k <= target && !kl.ended) {
+    kl.pending = target;
+    setStatus('info', '<span class="spinner"></span>KataGo đang tính nước tiếp theo…');
+  }
+}
 
 // The variation's moves as `played` entries (null for a pass), colours alternating from its first move
 function lineStones(rl) {
@@ -1193,8 +1277,8 @@ function lineStones(rl) {
   });
 }
 
-// How many moves of the variation the board has gone along (on top of the position before the mistake), -1 when
-// the board is somewhere else
+// How many moves of the line the board has gone along (on top of the position it starts from), -1 when the board
+// is somewhere else
 function lineOffset(rl) {
   if (played.length < rl.base.length || !rl.base.every((p, i) => sameMove(p, played[i]))) return -1;
   const st = lineStones(rl);
@@ -1207,17 +1291,15 @@ function lineOffset(rl) {
   return k;
 }
 
-// At the end of what was played of a best variation, with more of it known: ▶ ▶▶ ⏭ go on along the variation
-const onLineEnd = () => !!(reviewLine && !cur.sel && reviewLine.k < reviewLine.moves.length);
-
 function leaveLine() {
-  reviewLine = null;
+  kataLine = null;
   document.querySelectorAll('#mistakes li').forEach(x => { x.classList.remove('on'); x.querySelector('.acts')?.remove(); });
 }
 
 // Play the variation from where the board is up to its move idx
 function playLineTo(idx) {
-  const rl = reviewLine, st = lineStones(rl);
+  const rl = kataLine, st = lineStones(rl);
+  rl.k = Math.max(0, lineOffset(rl));
   for (let i = rl.k; i <= idx; i++) {
     const who = (i % 2 === 0) === (rl.first === 'B') ? 'B' : 'W';
     if (!st[i]) { toPlay = who === 'B' ? 'W' : 'B'; continue; }
@@ -1227,8 +1309,8 @@ function playLineTo(idx) {
   clearSugg();
   render();
   saveSoon();
-  const k = rl.k, left = rl.moves.length - k;
-  setStatus('info', `Biến tốt nhất thay cho nước ${rl.number}: đã đi ${k} nước · ${left ? `số 1–${Math.min(WINDOW, left)} là các nước tiếp theo` : rl.ended ? 'hết biến' : 'đang tính thêm…'} · ◀ để lùi.`);
+  const k = rl.k, left = rl.moves.length - k, last = played[played.length - 1];
+  setStatus('info', `${rl.number ? `Biến tốt nhất thay cho nước ${rl.number}: đã đi ${k} nước` : `KataGo: ${last?.color ? `${NAME[last.color === 1 ? 'B' : 'W']} ${pointName(last.r, last.c)}` : ''}`} · ${left ? `số 1–${Math.min(WINDOW, left)} viền xanh là các nước tiếp theo` : rl.ended ? 'hết biến' : 'đang tính thêm…'} · ◀ để lùi.`);
 }
 
 // Search more of the variation when few known moves are left (one request at a time, a pause after an error)
@@ -1236,17 +1318,33 @@ async function fetchLine(rl) {
   if (rl.fetching || rl.ended || rl.moves.length - rl.k > AHEAD || rl.moves.length >= 290 || Date.now() < (rl.retryAt || 0)) return;
   rl.fetching = true;
   try {
+    if (!rl.moves.length) {   // a new position: wait a moment, the user may still be stepping through moves
+      await new Promise(res => setTimeout(res, 400));
+      if (kataLine !== rl) return;
+    }
     const sent = rl.moves.length;
-    const j = await apiJson(`api/sessions/${rl.sid}/review/line`, { method: 'POST', body: { number: rl.number, line: rl.moves, count: BATCH } });
-    if (rl.moves.length === sent) rl.moves.push(...j.moves);   // rl.moves is the mistake's own line
+    const j = rl.number   // a review mistake's line, kept with it; otherwise KataGo's line from any position
+      ? await apiJson(`api/sessions/${rl.sid}/review/line`, { method: 'POST', body: { number: rl.number, line: rl.moves, count: BATCH } })
+      : await apiJson('api/line', { method: 'POST', body: { matrix: rl.matrix, to_play: rl.first, komi: komi(), line: rl.moves,
+                                                            count: BATCH, session_id: session?.id } });
+    if (rl.moves.length === sent) rl.moves.push(...j.moves);   // for a mistake: its own line
     if (!j.moves.length) rl.ended = true;
+    rl.error = null;
   } catch (err) {
     rl.retryAt = Date.now() + 15000;
-    setStatus('err', 'Chưa tính thêm được biến: ' + esc(err.message));
+    rl.error = err.message;
+    rl.pending = undefined;
+    setStatus('err', 'KataGo chưa tính được biến: ' + esc(err.message));
   } finally {
     rl.fetching = false;
   }
-  if (reviewLine === rl) { render(); showReviewLineText(rl); }
+  if (kataLine !== rl) return;
+  if (rl.pending !== undefined && rl.k < rl.moves.length) {   // ▶ pressed while it was searching
+    const t = rl.pending;
+    rl.pending = undefined;
+    playLineTo(Math.min(t, rl.moves.length - 1));
+  } else render();
+  if (rl.number) showReviewLineText(rl);
 }
 function showReviewLineText(rl) {
   const li = document.querySelector('#mistakes li.on .line');

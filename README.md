@@ -20,6 +20,9 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   vận hành (bot Telegram, thêm sách) ở [deploy/README.md](deploy/README.md). Bản Cloud Run cũ đã gỡ (6/10/2026).
 - Cây nước đi: mọi nhánh đã thử được giữ (lùi rồi đi khác là mở nhánh mới), nhánh đang xem sáng lên, chạm một nước
   trên cây để nhảy tới; nút ⏮ ◀◀ ◀ ▶ ▶▶ ⏭ (về gốc, ±1, ±10, tới cuối nhánh) như OGS. Lưu cùng ván (`tree`).
+  Trên bàn chỉ đánh số 10 nước gần nhất (số thật trong ván, nước cuối có vòng cam). Công tắc "Khi bấm ▶":
+  🌳 Theo nhánh (đi theo nhánh đang sáng) hoặc 🤖 Theo KataGo (đi nước tốt nhất; 10 nước tiếp theo hiện mờ, viền xanh,
+  tính trước theo đợt qua `POST /api/line`). Chạm một ứng viên của 💡 Gợi ý hoặc mở một lỗi của review là tự sang 🤖.
 - Hỏi bằng giọng nói, nghe trả lời bằng giọng tiếng Việt (nhận giọng trong trình duyệt, dự phòng `/api/stt`).
 - Góp ý (tab ⭐): AI tự trả lời công khai, admin trả lời tay trên web hoặc qua bot Telegram (`telegram_bot.py`).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
