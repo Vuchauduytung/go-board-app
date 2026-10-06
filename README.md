@@ -25,6 +25,10 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   tính trước theo đợt qua `POST /api/line`). Chạm một ứng viên của 💡 Gợi ý hoặc mở một lỗi của review là tự sang 🤖.
 - Hỏi bằng giọng nói (nhận giọng trong trình duyệt, dự phòng `/api/stt`), nghe trả lời bằng giọng tiếng Việt do server
   tạo (`tts.py`: Microsoft HoaiMy qua edge-tts, dự phòng Google; giọng của máy chỉ khi server lỗi).
+- Đánh với AI (🤖 Đánh với AI): cấp 5k–5d. Mỗi lượt KataGo tìm ~40 ứng viên, AI rút một nước sao cho trung bình mất
+  đúng số điểm của cấp đó (`bot.py`, bảng `LEVELS` = điểm mất trung bình mỗi nước, điểm mất tối đa một nước; chỉnh ở
+  đó). Thanh ván đấu hiện điểm mất trung bình mỗi nước của AI và của người chơi để hiệu chỉnh; bỏ lượt, đi lại, xin
+  thua, đếm điểm bằng KataGo. Ván được lưu như mọi ván khác (`play` trong session, `POST /api/play`).
 - Góp ý (tab ⭐): AI tự trả lời công khai, admin trả lời tay trên web hoặc qua bot Telegram (`telegram_bot.py`).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
   tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi). Chạm số trên biến (hoặc ▶) để đi tiếp

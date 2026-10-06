@@ -77,6 +77,7 @@ def summary(s):
     return {k: s.get(k) for k in ('id', 'title', 'pinned', 'created_at', 'updated_at', 'board_size', 'scan_id',
                                   'matrix', 'to_play')} \
         | {'moves': sum(1 for p in s.get('played', []) if p.get('color')), 'questions': len(s.get('chat', [])),
+           'vs_ai': (s.get('play') or {}).get('level'),
            'sgf': bool(s.get('game')), 'review': (s.get('review') or {}).get('status')}
 
 
@@ -128,7 +129,8 @@ def _change(user, sid, fn):
 def update(user, sid, fields):
     """Board state (played, tree, to_play, start_turn, matrix) and title; the starting position never changes."""
     def fn(s):
-        s.update({k: v for k, v in fields.items() if k in ('played', 'tree', 'to_play', 'start_turn', 'matrix', 'title')})
+        s.update({k: v for k, v in fields.items() if k in ('played', 'tree', 'play', 'to_play', 'start_turn', 'matrix',
+                                                           'title')})
         s['updated_at'] = time.time()
     return _change(user, sid, fn)
 

@@ -14,6 +14,7 @@
 #                         admins reply publicly (new reviews get an LLM reply first, see feedback.py)
 #   POST /api/stt         voice question -> text, for browsers without speech recognition
 #   POST /api/tts         a piece of an answer -> MP3 read in Vietnamese (tts.py)
+#   POST /api/play        the AI's move at a level from 5k to 5d (bot.py)
 #   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
@@ -42,6 +43,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 import accounts
+import bot
 import coach
 import kgcache
 import review
@@ -594,11 +596,13 @@ class SessionIn(BaseModel):
     matrix: Optional[List[List[int]]] = None   # position on screen (list thumbnails)
     title: Optional[str] = None
     tree: Optional[MoveTree] = None    # every line tried from the starting position; `played` is the one shown
+    play: Optional[dict] = None        # a game against the AI: level, AI colour, komi, the moves' losses, result
 
 
 class SessionUpdate(BaseModel):
     played: Optional[List[Placed]] = None
     tree: Optional[MoveTree] = None
+    play: Optional[dict] = None
     to_play: Optional[str] = None
     start_turn: Optional[str] = None
     matrix: Optional[List[List[int]]] = None
@@ -615,6 +619,8 @@ def _check_session(n, fields):
             raise HTTPException(400, 'Nước đi không hợp lệ')
     if len(fields.get('played') or []) > 2000:
         raise HTTPException(400, 'Quá nhiều nước đi')
+    if fields.get('play') is not None and len(json.dumps(fields['play'])) > 100_000:
+        raise HTTPException(400, 'Dữ liệu ván đấu quá lớn')
     if fields.get('tree') is not None:
         t = fields['tree']
         nodes = t['nodes']
@@ -754,6 +760,38 @@ def review_line(sid: str, body: LineIn, user: str = Depends(current_user)):
     if more:
         sessions.set_mistake_line(user, sid, body.number, body.line + more)
     return {'moves': more}
+
+
+class PlayIn(BaseModel):
+    matrix: List[List[int]]          # the position the moves start from (the whole board when no moves)
+    to_play: str                     # who plays first from it
+    moves: List[List[str]] = []      # [["B", "Q16" | "pass"], …] up to the position the AI plays in
+    komi: float = 7.5
+    level: str = '1k'
+    session_id: Optional[str] = None
+
+
+@app.post('/api/play')
+def play_move(body: PlayIn, user: str = Depends(current_user)):
+    """The AI's move in a game against it: one of KataGo's candidates, drawn for the level (bot.py)."""
+    _check_board(body.matrix, body.to_play)
+    _own_session(user, body.session_id)
+    if body.level not in bot.LEVELS:
+        raise HTTPException(400, 'Cấp độ phải từ 5k đến 5d')
+    n = len(body.matrix)
+    if len(body.moves) > 1000 or any(len(m) != 2 or m[0] not in ('B', 'W') or
+                                      (m[1] != 'pass' and coach.parse_point(m[1], n) is None) for m in body.moves):
+        raise HTTPException(400, 'Nước đi không hợp lệ')
+    payload = {'matrix': body.matrix, 'to_play': body.to_play, 'moves': body.moves, 'komi': body.komi, **bot.SEARCH}
+    try:
+        res = _katago_for(user, body.session_id)(payload)
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    except KataGoError as ex:
+        raise HTTPException(ex.status, str(ex))
+    out = bot.choose(res, body.level)
+    out['resign'] = bot.should_resign(res, len(body.moves))
+    return out
 
 
 class BestLineIn(BaseModel):

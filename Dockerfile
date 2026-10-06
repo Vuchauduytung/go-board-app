@@ -12,7 +12,7 @@ COPY gr/ gr/
 COPY img2sgf/ img2sgf/
 COPY static/ static/
 COPY rag/*.py rag/
-COPY app.py moku.py coach.py accounts.py kgcache.py sessions.py review.py feedback.py telegram_bot.py tts.py ./
+COPY app.py moku.py coach.py accounts.py kgcache.py sessions.py review.py feedback.py telegram_bot.py tts.py bot.py ./
 ENV DATA_DIR=/data TZ=Asia/Ho_Chi_Minh HF_HUB_OFFLINE=1
 VOLUME /data
 EXPOSE 8000

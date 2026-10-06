@@ -163,6 +163,12 @@
   .follow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
   .follow .seg button { padding: 7px 10px; font-size: 14px; }
   #followHint { font-size: 12px; margin: -2px 0 8px; }
+  .vsbar { background: #f6f1e8; border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin: 0 0 10px; font-size: 14px; }
+  .vsbar .over { margin-top: 6px; font-weight: 700; color: var(--accent); }
+  .vsbar .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .vsbar .acts button { flex: 1; min-width: 70px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+                        border-radius: 9px; padding: 8px 6px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .vsbar .acts button:disabled { opacity: .4; cursor: default; }
   .nav { display: flex; gap: 6px; }
   .nav button { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
                 padding: 11px 0; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: -2px; }
@@ -242,6 +248,29 @@
       </div>
     </div>
     <button class="btn secondary field" type="button" id="newBoard">＋ Ván mới trên bàn trống</button>
+    <button class="btn secondary field" type="button" id="aiOpen">🤖 Đánh với AI</button>
+    <div id="aiSetup" hidden>
+      <div class="row">
+        <div class="field">
+          <span>Cấp độ AI</span>
+          <select id="aiLevel">
+            <option>5k</option><option>4k</option><option>3k</option><option>2k</option><option selected>1k</option>
+            <option>1d</option><option>2d</option><option>3d</option><option>4d</option><option>5d</option>
+          </select>
+        </div>
+        <div class="field">
+          <span>Bạn cầm</span>
+          <select id="aiColor">
+            <option value="B">⚫ Đen (đi trước)</option><option value="W">⚪ Trắng</option><option value="R">🎲 Ngẫu nhiên</option>
+          </select>
+        </div>
+        <div class="field">
+          <span>Komi</span>
+          <select id="aiKomi"><option>6.5</option><option selected>7.5</option><option>0.5</option></select>
+        </div>
+      </div>
+      <button class="btn accent field" type="button" id="aiStart">▶ Bắt đầu ván mới (bàn ở ô "Bàn cờ")</button>
+    </div>
   </section>
 
   <div id="status" class="status" hidden></div>
@@ -274,7 +303,19 @@
         <button type="button" data-p="W">⚪ Tới Trắng</button>
       </div>
     </div>
-    <div class="follow">
+    <div class="vsbar" id="vsBar" hidden>
+      <div id="vsInfo"></div>
+      <div class="muted" id="vsStats"></div>
+      <div class="over" id="vsOver" hidden></div>
+      <div class="acts">
+        <button type="button" id="vsPass">Bỏ lượt</button>
+        <button type="button" id="vsUndo">↶ Đi lại</button>
+        <button type="button" id="vsAi">🤖 AI đi</button>
+        <button type="button" id="vsResign">🏳 Xin thua</button>
+        <button type="button" id="vsCount">Đếm điểm</button>
+      </div>
+    </div>
+    <div class="follow" id="followBox">
       <span class="muted">Khi bấm ▶</span>
       <div class="seg" id="followSeg">
         <button type="button" data-f="branch" class="on">🌳 Theo nhánh</button>
@@ -388,6 +429,7 @@ let scan = null;      // starting position: response of /api/recognize, or an em
 let session = null;   // review session on screen: {id, title, pinned}; created on the first change
 let game = null;      // game record of a session imported from SGF: {moves: [["B", "Q16" | "pass"]], komi, …}
 let kataLine = null; // KataGo's best line over the board, see "follow KataGo" below
+let play = null;      // a game against the AI on this board, see "game against the AI" below
 let followMode = 'branch'; // what ▶ ▶▶ ⏭ follow: 'branch' (the lit line of the tree) or 'kata' (KataGo's best moves)
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
@@ -455,7 +497,7 @@ function startBoard(start) {
   matrix = clone(start.matrix);
   played = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
   tree = newNode(null, null); cur = tree;
-  kataLine = null; followMode = 'branch';
+  kataLine = null; followMode = 'branch'; play = null;
   session = null;
   game = null;
   clearSugg();
@@ -570,6 +612,7 @@ function updateModeUI() {
   const kataMore = followMode === 'kata' && kataLine && !(kataLine.ended && kataLine.k >= kataLine.moves.length);
   for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = followMode === 'kata' ? !kataMore : !cur.sel;
   for (const b of $('followSeg').children) b.classList.toggle('on', b.dataset.f === followMode);
+  renderPlay();
   const kl = kataLine;
   $('followHint').textContent = followMode === 'branch' ? '▶ đi theo nhánh đang sáng trong cây nước đi.'
     : !kl ? '' : kl.k < kl.moves.length ? `▶ đi nước tốt nhất của KataGo · đã tính trước ${kl.moves.length - kl.k} nước${kl.fetching ? ', đang tính thêm…' : ''}.`
@@ -647,17 +690,24 @@ $('board').addEventListener('click', e => {
     render();
     return;
   }
-  const cand = sugg?.moves.find(mv => mv.row === r && mv.col === c);
+  const playing = play && !play.over;
+  if (playing && (play.thinking || toPlay === play.ai)) {
+    setStatus('info', play.thinking ? 'AI đang nghĩ…' : 'Đang tới lượt AI: bấm <b>🤖 AI đi</b>.');
+    return;
+  }
+  const cand = !playing && sugg?.moves.find(mv => mv.row === r && mv.col === c);
   if (cand) { followCandidate(cand); return; }   // a suggestion of 💡 Gợi ý: play it, then ▶ follows KataGo
-  const hit = kataLine?.window?.find(w => w.r === r && w.c === c);
+  const hit = !playing && kataLine?.window?.find(w => w.r === r && w.c === c);
   if (hit) { playLineTo(hit.idx); return; }   // a numbered move of KataGo's line: go on along it
   const who = toPlay;
   const err = place(r, c, who);
   if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ◀ để lùi.' : '')); return; }
   setStatus('info', `${NAME[who]} đặt ${pointName(r, c)} · tới lượt ${NAME[toPlay]}.`);
   clearSugg();
+  if (playing) play.passes = 0;
   render();
   saveSoon();
+  if (playing) aiMove();
 });
 
 // Long-press a stone to remove it (e.g. a stone recognised by mistake); recorded so Undo puts it back
@@ -929,7 +979,8 @@ $('analyze').addEventListener('click', async () => {
 });
 
 // ---- sessions: every review is saved for its user; the 10 most recent are listed, starred ones are kept ----
-const boardState = () => ({ played, tree: treeJSON(), to_play: toPlay, start_turn: startTurn, matrix });
+const boardState = () => ({ played, tree: treeJSON(), to_play: toPlay, start_turn: startTurn, matrix,
+                             ...(play ? { play: { ...play, thinking: undefined } } : {}) });
 let creating = null, saveTimer = null;
 
 // The session of the board on screen, created on first use
@@ -937,7 +988,8 @@ async function ensureSession() {
   if (session) return session;
   if (!creating) {
     const start = scan;
-    creating = apiJson('api/sessions', { method: 'POST', body: { base: scan.matrix, scan_id: scan.id, ...boardState() } })
+    const title = play ? `Đấu AI ${play.level} · ${new Date().toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : undefined;
+    creating = apiJson('api/sessions', { method: 'POST', body: { base: scan.matrix, scan_id: scan.id, title, ...boardState() } })
       .then(s => {
         if (scan !== start) return null;   // the user moved on to another board meanwhile
         session = { id: s.id, title: s.title, pinned: s.pinned };
@@ -1003,7 +1055,7 @@ const sessionItem = s => `
     <button type="button" class="open" data-open="${s.id}">${s.matrix ? miniBoard(s.matrix) : ''}
       <div class="t">
         <div><b>${esc(s.title || 'Ván cờ')}</b></div>
-        <div class="muted">${s.sgf ? 'SGF' + (s.review === 'done' ? ' · đã review' : '') + ' · ' : ''}${s.board_size}×${s.board_size} · ${s.moves} nước · ${s.questions} câu hỏi · ${when(s.updated_at)}</div>
+        <div class="muted">${s.vs_ai ? `🤖 AI ${s.vs_ai} · ` : ''}${s.sgf ? 'SGF' + (s.review === 'done' ? ' · đã review' : '') + ' · ' : ''}${s.board_size}×${s.board_size} · ${s.moves} nước · ${s.questions} câu hỏi · ${when(s.updated_at)}</div>
       </div>
     </button>
     <button type="button" class="icon${s.pinned ? ' on' : ''}" data-pin="${s.id}" title="${s.pinned ? 'Bỏ lưu' : 'Lưu lâu dài'}">${s.pinned ? '★' : '☆'}</button>
@@ -1031,6 +1083,7 @@ async function openSession(id) {
   played = s.played; toPlay = s.to_play; startTurn = s.start_turn;
   variations = s.variations || [];
   tree = s.tree ? treeFrom(s.tree) : newNode(null, null);
+  play = s.play ? { ...s.play, thinking: false } : null;
   if (!s.tree && game) lightLine(gameStones(game.moves));   // older SGF sessions: the game is the main line
   replay();
   showReview(s.review);
@@ -1067,7 +1120,7 @@ for (const list of ['recent', 'pinned']) $(list).addEventListener('click', async
 });
 
 // ---- SGF game records and their review ----
-const komi = () => game?.komi ?? 7.5;
+const komi = () => game?.komi ?? play?.komi ?? 7.5;
 
 $('sgf').addEventListener('change', async e => {
   const file = e.target.files[0];
@@ -1349,6 +1402,138 @@ function showReviewLineText(rl) {
   const li = document.querySelector('#mistakes li.on .line');
   if (li) li.textContent = `Biến tốt nhất: ${rl.moves.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${rl.moves.length > WINDOW ? ` … (đã tính ${rl.moves.length} nước)` : ''}`;
 }
+
+// ---- game against the AI: the player taps a move, the AI answers with a KataGo candidate drawn for its level
+// (bot.py: 5k–5d). The bar shows both sides' average loss per move, to calibrate the levels. ----
+const avg = xs => xs.length ? (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2) : '–';
+const you = () => play.ai === 'B' ? 'W' : 'B';
+
+function renderPlay() {
+  $('vsBar').hidden = !play;
+  const playing = play && !play.over;
+  $('followBox').hidden = $('followHint').hidden = !!playing;   // ▶ follows the game, not KataGo, while playing
+  if (!play) return;
+  $('vsInfo').innerHTML = `🤖 Đấu AI <b>${play.level}</b> · bạn cầm <b>${NAME[you()]}</b> · komi ${play.komi}` +
+    (playing ? ` · ${play.thinking ? '<span class="spinner"></span>AI đang nghĩ…' : toPlay === play.ai ? 'tới lượt AI' : '<b>tới lượt bạn</b>'}` : '');
+  $('vsStats').textContent = `Mất trung bình mỗi nước: AI ${avg(play.ai_losses)} điểm (${play.ai_losses.length} nước) · bạn ${avg(play.user_losses)} điểm (${play.user_losses.length} nước)`;
+  $('vsOver').hidden = !play.over;
+  $('vsOver').textContent = play.over || '';
+  $('vsPass').disabled = $('vsResign').disabled = $('vsCount').disabled = !playing || play.thinking || toPlay === play.ai;
+  $('vsAi').disabled = !playing || play.thinking || toPlay !== play.ai;
+  $('vsUndo').disabled = !playing || play.thinking || !cur.parent;
+}
+
+// The position for KataGo with its history (ko), as the coach sends it; a pass of the side not to move is added
+function kataHistory() {
+  const firstPlaced = played.findIndex(p => p.color), lastRemoved = played.map(p => !p.color).lastIndexOf(true);
+  if (firstPlaced < 0 || lastRemoved >= firstPlaced) return { matrix, to_play: toPlay, moves: [] };
+  const base = clone(scan.matrix);
+  played.filter(p => !p.color).forEach(p => { base[p.r][p.c] = 0; });
+  const moves = played.filter(p => p.color).map(p => [p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
+  if (moves[moves.length - 1][0] === toPlay) moves.push([toPlay === 'B' ? 'W' : 'B', 'pass']);
+  return { matrix: base, to_play: startTurn, moves };
+}
+
+$('aiOpen').addEventListener('click', () => { $('aiSetup').hidden = !$('aiSetup').hidden; });
+$('aiStart').addEventListener('click', async () => {
+  await saveNow();   // the board being left keeps its last changes
+  emptyBoard(+$('size').value);
+  const c = $('aiColor').value, mine = c === 'R' ? (Math.random() < .5 ? 'B' : 'W') : c;
+  play = { level: $('aiLevel').value, ai: mine === 'B' ? 'W' : 'B', komi: +$('aiKomi').value, passes: 0,
+           ai_losses: [], user_losses: [], expect: null, over: null, started_at: Date.now() };
+  $('aiSetup').hidden = true;
+  $('meta').textContent = `${matrix.length}×${matrix.length} · đấu AI ${play.level}`;
+  render();
+  try { await ensureSession(); } catch (e) { /* played without keeping it */ }
+  setStatus('ok', `Ván mới với AI ${play.level}: bạn cầm ${NAME[mine]}${mine === 'B' ? ', chạm bàn cờ để đi nước đầu' : ', AI đi trước'}.`);
+  $('resultCard').scrollIntoView({ behavior: 'smooth' });
+  if (play.ai === 'B') aiMove();
+});
+
+async function aiMove() {
+  if (!play || play.over || play.thinking || toPlay !== play.ai) return;
+  const g = play, atLen = played.length;
+  g.thinking = true;
+  render();
+  try {
+    let s = null;
+    try { s = await ensureSession(); } catch (e) { /* searched without indexing it in a session */ }
+    const j = await apiJson('api/play', { method: 'POST', body: { ...kataHistory(), komi: komi(), level: g.level, session_id: s?.id } });
+    if (play !== g || played.length !== atLen || toPlay !== g.ai) return;   // the board changed meanwhile
+    // the player's move just before, judged by this search: what it gave away next to what the AI expected
+    if (g.expect && g.expect.len + 1 === played.length) g.user_losses.push(Math.max(0, +(j.score_lead - g.expect.lead).toFixed(2)));
+    g.expect = null;
+    if (j.resign) { g.over = `AI ${g.level} (${NAME[g.ai]}) xin thua: bạn thắng!`; setStatus('ok', g.over); return; }
+    let done = null;
+    for (const mv of [j.move, ...j.alternatives]) {   // the next candidates when one is illegal here (ko)
+      if (mv === 'pass') { done = 'pass'; break; }
+      const rc = pointRC(mv);
+      if (rc && !place(rc[0], rc[1], g.ai)) { done = mv; break; }
+    }
+    if (!done || done === 'pass') { aiPass(); return; }
+    g.passes = 0;
+    if (done === j.move) g.ai_losses.push(j.loss);
+    g.expect = { len: played.length, lead: j.chosen_lead };
+    setStatus('info', `AI ${g.level} đi <b>${done}</b> · tới lượt bạn.`);
+  } catch (err) {
+    setStatus('err', 'AI chưa đi được: ' + esc(err.message) + ' · bấm <b>🤖 AI đi</b> để thử lại.');
+  } finally {
+    g.thinking = false;
+    if (play === g) { clearSugg(); render(); saveSoon(); }
+  }
+}
+
+function aiPass() {
+  play.passes++;
+  toPlay = you();
+  setStatus('info', `AI bỏ lượt${play.passes >= 2 ? '' : ' · tới lượt bạn (bỏ lượt nữa là hết ván)'}.`);
+  if (play.passes >= 2) countScore();
+}
+
+$('vsPass').addEventListener('click', () => {
+  if (!play || play.over || toPlay === play.ai) return;
+  play.passes++;
+  toPlay = play.ai;
+  render(); saveSoon();
+  if (play.passes >= 2) countScore(); else aiMove();
+});
+$('vsAi').addEventListener('click', aiMove);
+$('vsResign').addEventListener('click', () => {
+  if (!play || play.over || !confirm('Xin thua ván này?')) return;
+  play.over = `Bạn xin thua: AI ${play.level} thắng.`;
+  setStatus('info', play.over); render(); saveSoon();
+});
+$('vsUndo').addEventListener('click', () => {   // back to the player's previous turn
+  if (!play || play.over || play.thinking || !cur.parent) return;
+  let node = cur.parent;
+  if (turnAfter(pathTo(node)) !== you() && node.parent) node = node.parent;
+  const lastColor = cur.m?.color;
+  goTo(node);
+  if (lastColor === (play.ai === 'B' ? 1 : 2)) play.ai_losses.pop();
+  play.user_losses.pop();
+  play.passes = 0; play.expect = null;
+  setStatus('info', `Đã đi lại · tới lượt bạn (${NAME[toPlay]}).`);
+  render(); saveSoon();
+});
+
+// The result as KataGo sees the position (komi included): who is ahead and by how much
+async function countScore() {
+  if (!play) return;
+  const g = play;
+  g.thinking = true; render();
+  try {
+    const j = await apiJson('api/analyze', { method: 'POST', body: { matrix, to_play: toPlay, komi: komi(), session_id: session?.id } });
+    const black = toPlay === 'B' ? j.score_lead : -j.score_lead, winner = black >= 0 ? 'B' : 'W';
+    const pts = Math.max(0.5, Math.round(Math.abs(black) * 2) / 2);
+    g.over = `Hết ván: ${NAME[winner]} thắng ${pts} điểm (KataGo ước tính, komi ${g.komi}) · ${winner === g.ai ? `AI ${g.level} thắng` : 'bạn thắng!'}`;
+    setStatus('ok', g.over);
+  } catch (err) {
+    setStatus('err', 'Chưa đếm được điểm: ' + esc(err.message));
+  } finally {
+    g.thinking = false; render(); saveSoon();
+  }
+}
+$('vsCount').addEventListener('click', () => { if (play && !play.over && confirm('Kết thúc ván và đếm điểm bằng KataGo?')) countScore(); });
 
 // ---- signed-in user and today's usage ----
 function showMe(m) {
