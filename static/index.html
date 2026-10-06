@@ -512,8 +512,9 @@ function render() {
     h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
   }
   if (activeVar && played.length < activeVar.from) activeVar = null;   // taken back past the variation's start
-  // numbers on the last LAST_NUMBERED moves only, as numbered in the game (a coach variation: from its 1st move)
-  const nums = moveNumbers(), lastI = played.map(p => !!p.color).lastIndexOf(true);
+  // numbers on the last LAST_NUMBERED moves only, as numbered in the game (a coach variation: from its 1st move);
+  // following KataGo, only its line is numbered and the last move keeps its ring
+  const nums = moveNumbers(), lastI = played.map(p => !!p.color).lastIndexOf(true), history = followMode !== 'kata';
   let shown = 0;
   for (let i = played.length - 1; i >= 0 && shown < LAST_NUMBERED; i--) {
     const p = played[i];
@@ -522,7 +523,7 @@ function render() {
     if (matrix[p.r][p.c] !== p.color || played.slice(i + 1).some(q => q.r === p.r && q.c === p.c)) continue;
     const x = m + p.c * s, y = m + p.r * s, no = activeVar ? i - activeVar.from + 1 : nums[i];
     if (i === lastI) h += `<circle cx="${x}" cy="${y}" r="15.5" fill="none" stroke="var(--accent)" stroke-width="2.5" pointer-events="none"/>`;
-    h += `<text x="${x}" y="${y + 4}" font-size="${no > 99 ? 10 : 12}" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${no}</text>`;
+    if (history) h += `<text x="${x}" y="${y + 4}" font-size="${no > 99 ? 10 : 12}" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${no}</text>`;
   }
   for (const k of coachMarks) {
     const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
