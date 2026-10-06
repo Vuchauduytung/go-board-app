@@ -117,3 +117,21 @@ def test_session_cache_answers_repeats_and_dies_with_the_session(storage):
     assert kgcache.cached(kg, payload, ('other', s['id'])) == first and kg.calls == 2   # not another user's cache
     sessions.delete('u', s['id'])
     assert not list(sessions.ROOT.glob('*/*.kg'))
+
+
+def test_best_line_grows_in_batches_and_is_kept(storage):
+    game = review.parse_sgf(make_sgf(moves=40))
+    kg = FakeKataGo()
+    r = run_review(game, kg)
+    m = r['mistakes']['B'][0]
+    i, line = m['number'] - 1, list(m['line'])
+    more = review.extend_line(kg, game, i, line, 10)
+    assert len(more) == 10
+    assert review.extend_line(kg, game, i, line, 10) == more   # same position, same answer
+
+    s = sessions.create('u', {'base': game['base'], 'board_size': 19, 'played': [], 'game': game, 'review': r})
+    sessions.set_mistake_line('u', s['id'], m['number'], line + more)
+    stored = sessions.get('u', s['id'])['review']['mistakes']['B'][0]
+    assert stored['line'] == line + more
+    sessions.set_mistake_line('u', s['id'], m['number'], ['A1'] * 30)   # not a longer version: ignored
+    assert sessions.get('u', s['id'])['review']['mistakes']['B'][0]['line'] == line + more

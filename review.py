@@ -15,6 +15,8 @@ PARALLEL = 4
 MISTAKES = 10     # listed per side
 CANDIDATES = 15   # per side, searched again more deeply before the 10 are picked
 LINE = 10         # moves (both sides) in each mistake's best variation
+LINE_VISITS = 400  # per search when the browser asks for more of a best variation
+LINE_MAX = 300     # moves a best variation can be lengthened to
 RULES = {'japanese': 'japanese', 'chinese': 'chinese', 'korean': 'korean', 'aga': 'aga', 'nz': 'new-zealand',
          'new zealand': 'new-zealand', 'tromp-taylor': 'tromp-taylor'}
 
@@ -114,6 +116,24 @@ def _line(katago, game, i, pv):
             break
         line += res['moves'][0]['pv']
     return line[:LINE]
+
+
+def extend_line(katago, game, i, line, count=LINE):
+    """The next `count` moves of the best variation `line` from the position before move i: KataGo's best line from
+    where `line` ends, searched again from its end until long enough. Fewer (or none) when the game ends."""
+    base, first = position(game, i), game['moves'][i][0]
+    out = []
+    for _ in range(4):
+        moves = line + out
+        if len(out) >= count or moves[-2:] == ['pass', 'pass']:
+            break
+        colored = [[first if k % 2 == 0 else coach.OTHER[first], mv] for k, mv in enumerate(moves)]
+        res = katago({**base, 'moves': base['moves'] + colored, 'max_visits': LINE_VISITS, 'top': 1,
+                      'ownership': False})
+        if not res['moves'] or not res['moves'][0]['pv']:
+            break
+        out += res['moves'][0]['pv']
+    return out[:count]
 
 
 def _deepen(katago, game, review, i):

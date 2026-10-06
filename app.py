@@ -709,6 +709,33 @@ def review_step(sid: str, user: str = Depends(current_user)):
     return review.progress(r)
 
 
+class LineIn(BaseModel):
+    number: int          # the mistake: game move number, from 1
+    line: List[str]      # its best variation known so far ("Q16" | "pass")
+    count: int = 10
+
+
+@app.post('/api/sessions/{sid}/review/line')
+def review_line(sid: str, body: LineIn, user: str = Depends(current_user)):
+    """The next moves of a mistake's best variation, as the user steps through it; kept with the mistake."""
+    s = _own_session(user, sid)
+    game = s.get('game')
+    if not game or not 1 <= body.number <= len(game['moves']):
+        raise HTTPException(400, 'Không có nước này trong ván')
+    n = game['board_size']
+    if len(body.line) >= review.LINE_MAX or any(mv != 'pass' and coach.parse_point(mv, n) is None for mv in body.line):
+        raise HTTPException(400, 'Biến không hợp lệ')
+    try:
+        more = review.extend_line(_katago_for(user, sid), game, body.number - 1, body.line, max(1, min(body.count, 20)))
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    except KataGoError as ex:
+        raise HTTPException(ex.status, str(ex))
+    if more:
+        sessions.set_mistake_line(user, sid, body.number, body.line + more)
+    return {'moves': more}
+
+
 @app.get('/api/books/{book_id}/pages/{page}')
 def book_page(book_id: str, page: int):
     from rag.catalog import BY_ID

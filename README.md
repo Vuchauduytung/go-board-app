@@ -23,7 +23,9 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
 - Hỏi bằng giọng nói, nghe trả lời bằng giọng tiếng Việt (nhận giọng trong trình duyệt, dự phòng `/api/stt`).
 - Góp ý (tab ⭐): AI tự trả lời công khai, admin trả lời tay trên web hoặc qua bot Telegram (`telegram_bot.py`).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
-  tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi).
+  tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi). Chạm số trên biến (hoặc ▶) để đi tiếp
+  theo biến: cửa sổ 10 nước trượt theo, biến được KataGo tính thêm từng đợt 10 nước khi chỉ còn ≤ 15 nước đã tính
+  phía trước (`POST /api/sessions/{id}/review/line`) và lưu cùng lỗi đó.
 - AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → OpenRouter → Mistral), xem
   [deploy/LLM_PROVIDERS.md](deploy/LLM_PROVIDERS.md).
 - KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~21 lượt/s trên CPU):

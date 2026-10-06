@@ -377,7 +377,7 @@ const $ = id => document.getElementById(id);
 let scan = null;      // starting position: response of /api/recognize, or an empty board ({id: null, matrix})
 let session = null;   // review session on screen: {id, title, pinned}; created on the first change
 let game = null;      // game record of a session imported from SGF: {moves: [["B", "Q16" | "pass"]], komi, …}
-let reviewLine = null; // variation drawn over the board: {moves, first, number}
+let reviewLine = null; // a review mistake's best variation over the board, see "best variation window" below
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
 let sugg = null;      // response of /api/analyze for the current matrix + toPlay
@@ -444,6 +444,7 @@ function startBoard(start) {
   matrix = clone(start.matrix);
   played = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
   tree = newNode(null, null); cur = tree;
+  reviewLine = null;
   session = null;
   game = null;
   clearSugg();
@@ -510,17 +511,19 @@ function render() {
     const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
     h += `<rect x="${m + k.col * s - 14}" y="${m + k.row * s - 14}" width="28" height="28" rx="6" fill="none" stroke="${col}" stroke-width="3" stroke-dasharray="5 3" pointer-events="none"/>`;
   }
-  if (reviewLine) {   // the review's best variation, numbered, over the position before the mistake
-    let who = reviewLine.first;
-    reviewLine.moves.forEach((mv, i) => {
-      const rc = mv === 'pass' ? null : pointRC(mv);
-      if (rc) {
-        const x = m + rc[1] * s, y = m + rc[0] * s, black = who === 'B';
-        h += `<circle cx="${x}" cy="${y}" r="13" fill="${black ? 'rgba(20,20,20,.72)' : 'rgba(250,250,250,.88)'}" stroke="var(--ok)" stroke-width="${i ? 1.2 : 2.5}" pointer-events="none"/>`;
-        h += `<text x="${x}" y="${y + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${black ? '#fff' : '#141414'}" pointer-events="none">${i + 1}</text>`;
-      }
-      who = who === 'B' ? 'W' : 'B';
-    });
+  if (reviewLine && lineOffset(reviewLine) < 0) leaveLine();   // the board left the variation
+  if (reviewLine) {   // the next WINDOW moves of the best variation, numbered from 1, over the position reached
+    const rl = reviewLine, k = rl.k = lineOffset(rl), st = lineStones(rl);
+    rl.window = [];
+    for (let i = 0; i < WINDOW && k + i < st.length; i++) {
+      const e = st[k + i];
+      if (!e || rl.window.some(w => w.r === e.r && w.c === e.c)) continue;   // a pass, or a point played again later
+      rl.window.push({ r: e.r, c: e.c, idx: k + i });
+      const x = m + e.c * s, y = m + e.r * s, black = e.color === 1;
+      h += `<circle cx="${x}" cy="${y}" r="13" fill="${black ? 'rgba(20,20,20,.72)' : 'rgba(250,250,250,.88)'}" stroke="var(--ok)" stroke-width="${i ? 1.2 : 2.5}" pointer-events="none"/>`;
+      h += `<text x="${x}" y="${y + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${black ? '#fff' : '#141414'}" pointer-events="none">${i + 1}</text>`;
+    }
+    fetchLine(rl);
   }
   if (sugg) sugg.moves.forEach((mv, i) => {
     if (mv.row === null) return;
@@ -546,7 +549,7 @@ function updateModeUI() {
     : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>chạm giữ</b> một quân để xoá · <b>◀</b> để lùi; đi khác sau khi lùi sẽ mở nhánh mới.`;
   for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
   for (const id of ['navFirst', 'navBack10', 'undo']) $(id).disabled = !cur.parent;
-  for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = !cur.sel;
+  for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = !cur.sel && !onLineEnd();
   $('cutBranch').disabled = !cur.parent;
   if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
 }
@@ -620,6 +623,8 @@ $('board').addEventListener('click', e => {
     render();
     return;
   }
+  const hit = reviewLine?.window?.find(w => w.r === r && w.c === c);
+  if (hit) { playLineTo(hit.idx); return; }   // a numbered move of the best variation: go on along it
   const who = toPlay;
   const err = place(r, c, who);
   if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ◀ để lùi.' : '')); return; }
@@ -730,6 +735,7 @@ function goTo(node) {
     : `Nước ${depthOf(node)}: nhấc quân ở ${pointName(m.r, m.c)}.`);
 }
 function step(n) {
+  if (n > 0 && onLineEnd()) { playLineTo(Math.min(reviewLine.k + n, reviewLine.moves.length) - 1); return; }
   let node = cur;
   for (let i = 0; i < Math.abs(n); i++) {
     const next = n < 0 ? node.parent : node.sel;
@@ -743,7 +749,7 @@ $('navBack10').addEventListener('click', () => step(-10));
 $('undo').addEventListener('click', () => step(-1));
 $('redo').addEventListener('click', () => step(1));
 $('navFwd10').addEventListener('click', () => step(10));
-$('navLast').addEventListener('click', () => goTo(litLeaf(cur)));
+$('navLast').addEventListener('click', () => onLineEnd() ? playLineTo(reviewLine.moves.length - 1) : goTo(litLeaf(cur)));
 document.addEventListener('keydown', e => {
   if ($('tab-scan').hidden || e.target.closest('input, textarea, select') || e.altKey || e.ctrlKey || e.metaKey) return;
   const act = { ArrowLeft: () => step(e.shiftKey ? -10 : -1), ArrowRight: () => step(e.shiftKey ? 10 : 1),
@@ -846,8 +852,6 @@ function treeFrom(t) {
 function clearSugg() {
   sugg = null;
   coachMarks = [];
-  reviewLine = null;
-  document.querySelectorAll('#mistakes li.on').forEach(li => li.classList.remove('on'));
   $('sugg').hidden = true;
 }
 
@@ -1102,7 +1106,7 @@ function showReview(r) {
     <li data-i="${i}">
       <div><b>${i + 1}.</b> Nước ${m.number}: ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
         · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${m.best || '—'}</b></div>
-      <div class="line">Biến tốt nhất: ${m.line.map((mv, k) => `${k + 1}.${mv}`).join(' ')}</div>
+      <div class="line">Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');
 }
 
@@ -1156,7 +1160,7 @@ $('mistakes').addEventListener('click', e => {
     return;
   }
   gotoGameMove(m.number - 1);
-  reviewLine = { moves: m.line, first: m.color, number: m.number };
+  reviewLine = { m, moves: m.line, first: m.color, number: m.number, base: played.slice(), sid: session.id };
   document.querySelectorAll('#mistakes li').forEach(x => {
     x.classList.toggle('on', x === li);
     x.querySelector('.acts')?.remove();
@@ -1168,9 +1172,86 @@ $('mistakes').addEventListener('click', e => {
     '<button class="src" type="button" data-act="ask">💬 Hỏi trợ lý về lỗi này</button>';
   li.appendChild(acts);
   render();
-  setStatus('info', `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${m.line.length} trên bàn là biến tốt nhất bắt đầu bằng ${m.best}.`);
+  setStatus('info', `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${Math.min(WINDOW, m.line.length)} trên bàn là biến tốt nhất bắt đầu bằng ${m.best}. Chạm số 1 (hoặc số bất kỳ) để đi tiếp theo biến.`);
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
+
+// ---- best variation window: the board shows the next WINDOW moves of a mistake's best variation, numbered from 1.
+// Tapping one of them plays the variation up to it and the window slides on, so a new move comes in as number
+// WINDOW. More of the variation is searched in batches of BATCH moves while at most AHEAD known moves are left
+// (10 known at first → 20 at once; at move 5 → 30, at move 15 → 40…), and kept with the mistake. ◀ / ▶ and the
+// tree move along it too; any other move leaves it. ----
+const WINDOW = 10, BATCH = 10, AHEAD = 15;
+
+// The variation's moves as `played` entries (null for a pass), colours alternating from its first move
+function lineStones(rl) {
+  let who = rl.first;
+  return rl.moves.map(mv => {
+    const rc = mv === 'pass' ? null : pointRC(mv), color = who === 'B' ? 1 : 2;
+    who = who === 'B' ? 'W' : 'B';
+    return rc && { r: rc[0], c: rc[1], color };
+  });
+}
+
+// How many moves of the variation the board has gone along (on top of the position before the mistake), -1 when
+// the board is somewhere else
+function lineOffset(rl) {
+  if (played.length < rl.base.length || !rl.base.every((p, i) => sameMove(p, played[i]))) return -1;
+  const st = lineStones(rl);
+  let k = 0;
+  for (const p of played.slice(rl.base.length)) {
+    while (k < st.length && !st[k]) k++;   // passes
+    if (k >= st.length || !sameMove(st[k], p)) return -1;
+    k++;
+  }
+  return k;
+}
+
+// At the end of what was played of a best variation, with more of it known: ▶ ▶▶ ⏭ go on along the variation
+const onLineEnd = () => !!(reviewLine && !cur.sel && reviewLine.k < reviewLine.moves.length);
+
+function leaveLine() {
+  reviewLine = null;
+  document.querySelectorAll('#mistakes li').forEach(x => { x.classList.remove('on'); x.querySelector('.acts')?.remove(); });
+}
+
+// Play the variation from where the board is up to its move idx
+function playLineTo(idx) {
+  const rl = reviewLine, st = lineStones(rl);
+  for (let i = rl.k; i <= idx; i++) {
+    const who = (i % 2 === 0) === (rl.first === 'B') ? 'B' : 'W';
+    if (!st[i]) { toPlay = who === 'B' ? 'W' : 'B'; continue; }
+    const err = place(st[i].r, st[i].c, who);
+    if (err) { setStatus('err', `Không đi tiếp được biến: ${esc(err)}`); break; }
+  }
+  clearSugg();
+  render();
+  saveSoon();
+  const k = rl.k, left = rl.moves.length - k;
+  setStatus('info', `Biến tốt nhất thay cho nước ${rl.number}: đã đi ${k} nước · ${left ? `số 1–${Math.min(WINDOW, left)} là các nước tiếp theo` : rl.ended ? 'hết biến' : 'đang tính thêm…'} · ◀ để lùi.`);
+}
+
+// Search more of the variation when few known moves are left (one request at a time, a pause after an error)
+async function fetchLine(rl) {
+  if (rl.fetching || rl.ended || rl.moves.length - rl.k > AHEAD || rl.moves.length >= 290 || Date.now() < (rl.retryAt || 0)) return;
+  rl.fetching = true;
+  try {
+    const sent = rl.moves.length;
+    const j = await apiJson(`api/sessions/${rl.sid}/review/line`, { method: 'POST', body: { number: rl.number, line: rl.moves, count: BATCH } });
+    if (rl.moves.length === sent) rl.moves.push(...j.moves);   // rl.moves is the mistake's own line
+    if (!j.moves.length) rl.ended = true;
+  } catch (err) {
+    rl.retryAt = Date.now() + 15000;
+    setStatus('err', 'Chưa tính thêm được biến: ' + esc(err.message));
+  } finally {
+    rl.fetching = false;
+  }
+  if (reviewLine === rl) { render(); showReviewLineText(rl); }
+}
+function showReviewLineText(rl) {
+  const li = document.querySelector('#mistakes li.on .line');
+  if (li) li.textContent = `Biến tốt nhất: ${rl.moves.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${rl.moves.length > WINDOW ? ` … (đã tính ${rl.moves.length} nước)` : ''}`;
+}
 
 // ---- signed-in user and today's usage ----
 function showMe(m) {

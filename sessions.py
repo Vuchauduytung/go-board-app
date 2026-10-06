@@ -172,6 +172,16 @@ def set_review(user, sid, review):
     return _change(user, sid, lambda s: s.update(review=review, updated_at=time.time()))
 
 
+def set_mistake_line(user, sid, number, line):
+    """Keep a review mistake's best variation once lengthened (only ever a longer version of the stored one)."""
+    def fn(s):
+        for m in ((s.get('review') or {}).get('mistakes') or {}).values():
+            for x in m:
+                if x['number'] == number and len(line) > len(x['line']) and line[:len(x['line'])] == x['line']:
+                    x['line'] = line
+    return _change(user, sid, fn)
+
+
 def _cache_dir(user, sid):
     return _dir(user) / f'{sid}.kg'
 
