@@ -288,6 +288,21 @@
       <h2 id="boardTitle">Bàn cờ</h2>
       <button class="icon" type="button" id="pinBtn" title="Lưu ván này">☆</button>
     </div>
+    <div class="vsbar" id="vsBar" hidden>
+      <div id="vsInfo"></div>
+      <div class="muted" id="vsStats"></div>
+      <div class="over" id="vsOver" hidden></div>
+      <div class="vsscore" id="vsScore" hidden></div>
+      <div class="acts">
+        <button type="button" id="vsPass">Bỏ lượt</button>
+        <button type="button" id="vsUndo">↶ Đi lại</button>
+        <button type="button" id="vsAi">🤖 AI đi</button>
+        <button type="button" id="vsResign">🏳 Xin thua</button>
+        <button type="button" id="vsCount">Đếm điểm</button>
+        <button type="button" id="vsLand" hidden>🗺 Xem đất</button>
+        <button type="button" id="vsReview" hidden>📋 Review ván này</button>
+      </div>
+    </div>
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="vars" id="varsBox" hidden>
       <h3><span>🔀 Biến thể trong ván này <span class="muted" id="varCount"></span></span>
@@ -305,21 +320,6 @@
       <div class="seg" id="turn">
         <button type="button" data-p="B" class="on">⚫ Tới Đen</button>
         <button type="button" data-p="W">⚪ Tới Trắng</button>
-      </div>
-    </div>
-    <div class="vsbar" id="vsBar" hidden>
-      <div id="vsInfo"></div>
-      <div class="muted" id="vsStats"></div>
-      <div class="over" id="vsOver" hidden></div>
-      <div class="vsscore" id="vsScore" hidden></div>
-      <div class="acts">
-        <button type="button" id="vsPass">Bỏ lượt</button>
-        <button type="button" id="vsUndo">↶ Đi lại</button>
-        <button type="button" id="vsAi">🤖 AI đi</button>
-        <button type="button" id="vsResign">🏳 Xin thua</button>
-        <button type="button" id="vsCount">Đếm điểm</button>
-        <button type="button" id="vsLand" hidden>🗺 Xem đất</button>
-        <button type="button" id="vsReview" hidden>📋 Review ván này</button>
       </div>
     </div>
     <div class="follow" id="followBox">
