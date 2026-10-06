@@ -16,6 +16,7 @@
 #   POST /api/tts         a piece of an answer -> MP3 read in Vietnamese (tts.py)
 #   POST /api/play        the AI's move at a level from 5k to 5d (bot.py)
 #   POST /api/score       counting a finished game: dead stones, territory, result (score.py)
+# Resource use is counted (usage.py) and reported to the admins on Telegram every morning.
 #   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
@@ -52,6 +53,7 @@ import score
 import feedback
 import sessions
 import telegram_bot
+import usage
 from accounts import QuotaExceeded
 from img2sgf import get_board_model, get_stone_model, get_board_image, classifier_board
 from img2sgf.tools import get_board_position
@@ -67,6 +69,8 @@ BOOK_PAGES = Path(os.environ.get('BOOK_PAGES_DIR', ROOT / 'books' / 'pages'))
 MAX_SIDE = 1600
 
 logging.basicConfig(level=logging.ERROR)  # gr logs a lot of warnings
+for _name in ('app', 'llm', 'tts', 'telegram', 'feedback', 'sessions', 'kgcache', 'usage', 'review', 'coach'):
+    logging.getLogger(_name).setLevel(logging.WARNING)   # ours: failures worth seeing in the logs
 log = logging.getLogger('app')
 
 torch.set_grad_enabled(False)
@@ -130,12 +134,19 @@ app = FastAPI(title='Go board scanner')
 app.include_router(telegram_bot.router)
 
 
+@app.on_event('startup')
+def start_usage_reports():
+    usage.start(telegram_bot.send_admins)
+
+
 def current_user(x_goog_authenticated_user_email: Optional[str] = Header(None),
                  cf_access_authenticated_user_email: Optional[str] = Header(None),
                  x_forwarded_email: Optional[str] = Header(None),
                  x_client_id: Optional[str] = Header(None)):
-    return accounts.identity(x_goog_authenticated_user_email, x_client_id, cf_access_authenticated_user_email,
+    user = accounts.identity(x_goog_authenticated_user_email, x_client_id, cf_access_authenticated_user_email,
                              x_forwarded_email)
+    usage.seen_user(user)
+    return user
 
 
 def _scan_dir(user, scan_id):
@@ -264,6 +275,7 @@ class KataGoError(Exception):
 def _katago(payload):
     """POST a query to the KataGo service; raises KataGoError with an HTTP status for the client."""
     req = urllib.request.Request(KATAGO_URL + '/analyze', json.dumps(payload).encode(), _katago_headers())
+    start = time.time()
     try:
         # a Modal GPU that scaled to zero may need a minute or more to start
         with urllib.request.urlopen(req, timeout=150 if os.environ.get('KATAGO_AUTH') == 'modal' else 90) as r:
@@ -273,6 +285,9 @@ def _katago(payload):
         raise KataGoError(422 if ex.code == 400 else 502, f'KataGo: {detail}')
     except (urllib.error.URLError, TimeoutError) as ex:
         raise KataGoError(503, f'KataGo chưa sẵn sàng: {ex}')
+    finally:
+        if os.environ.get('KATAGO_AUTH') == 'modal':   # billed by the second: counted for the admins' report
+            usage.katago(start, time.time(), int(payload.get('max_visits', 400)))
 
 
 def _check_board(matrix, to_play):
@@ -313,10 +328,12 @@ def katago_warmup():
 
     def ping():
         req = urllib.request.Request(KATAGO_URL + '/health', headers=_katago_headers())
+        start = time.time()
         try:
             urllib.request.urlopen(req, timeout=150).read()
         except Exception as ex:
             log.warning('KataGo warm-up failed: %s', ex)
+        usage.katago(start, time.time())   # a warm-up starts the GPU too
     threading.Thread(target=ping, daemon=True).start()
     return {'started': True}
 
@@ -394,6 +411,16 @@ class ChatIn(BaseModel):
 
 @app.post('/api/chat')
 def chat(c: ChatIn, user: str = Depends(current_user)):
+    start = time.time()
+    usage.add('chat:requests')
+    try:
+        return _chat(c, user)
+    finally:
+        if time.time() - start > 60:   # what the proxy's timeout has to allow for
+            usage.add('chat:slow')
+
+
+def _chat(c, user):
     from rag.chat import HISTORY_TURNS, answer
     q = c.question.strip()
     if not q or len(q) > 1000:

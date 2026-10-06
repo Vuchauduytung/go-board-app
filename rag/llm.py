@@ -130,11 +130,26 @@ def generate(chain_name, system, messages, max_tokens, schema=None, temperature=
         except Exception as ex:
             log.warning('%s:%s failed, trying the next model: %s', provider, model, str(ex)[:300])
             errors.append(f'{provider}:{model}: {str(ex)[:120]}')
+            _count(f'llm_err:{provider}')
+            if any(x in str(ex) for x in ('429', 'RESOURCE_EXHAUSTED', 'rate limit', 'Rate limit')):
+                _count(f'llm_429:{provider}')
             continue
         if text:
+            _count(f'llm:{provider}:{model.replace(":", "/")}')
+            _count(f'llm_tokens:{provider}', tokens)
             return Reply(text, tokens, f'{provider}:{model}')
         errors.append(f'{provider}:{model}: empty answer')
+    _count('llm:unavailable')
     raise Unavailable('Không có mô hình AI nào trả lời được lúc này (' + ('; '.join(errors) or 'chưa có API key') + ')')
+
+
+def _count(counter, amount=1):
+    """Usage for the admins' daily report (usage.py); never fails a request."""
+    try:
+        import usage
+        usage.add(counter, amount)
+    except Exception:
+        pass
 
 
 # Speech to text for the voice questions, when the browser cannot transcribe them itself
@@ -157,6 +172,7 @@ def transcribe(audio, mime, language='vi'):
             errors.append(f'{provider}:{model}: {str(ex)[:120]}')
             continue
         if text:
+            _count(f'stt:{provider}')
             return text
         errors.append(f'{provider}:{model}: empty transcript')
     raise Unavailable('Không chuyển được giọng nói thành chữ lúc này (' + ('; '.join(errors) or 'chưa có API key') + ')')

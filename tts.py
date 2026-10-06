@@ -47,6 +47,11 @@ def synthesize(text):
             errors.append(f'{name}: {type(ex).__name__}')
             continue
         if audio:
+            try:
+                import usage
+                usage.add(f'tts:{name}')
+            except Exception:
+                pass
             with _cache_lock:
                 _cache[key] = audio
                 while len(_cache) > CACHE_ITEMS:

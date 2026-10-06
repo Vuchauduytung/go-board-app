@@ -193,6 +193,9 @@
                      padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
   .voicenote { margin-top: 8px; padding: 8px 10px; border-radius: 9px; font-size: 13px; background: #efe7da; }
   .voicenote.err { background: #f8e3e1; color: var(--err); }
+  .varprev { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  .varprev svg { width: 100%; max-width: 360px; display: block; margin: 6px auto; border-radius: 6px; }
+  .varprev .pv { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
   .msg .say { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
               cursor: pointer; padding: 0; }
   ul.reviews .reply { margin: 8px 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--accent); background: #f6f1e8;
@@ -1816,7 +1819,11 @@ async function chatRequest(q, { log, btn, body = {}, waitText = 'Đang tra sách
     showMe(j.me);
     return { ...j, el: wait };
   } catch (err) {
-    wait.innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`;
+    // 502 / 504: the proxy stopped waiting (a slow search, a GPU starting); the answer is not lost for good
+    const slow = /bad gateway|gateway timeout|failed to fetch|network/i.test(err.message);
+    wait.innerHTML = `<span style="color:var(--err)">${slow ? 'Máy chủ trả lời chậm quá (KataGo có thể đang khởi động), hỏi lại nhé.' : esc(err.message)}</span>
+      <button type="button" class="src" data-retry>↻ Hỏi lại</button>`;
+    wait._retry = { q, body };
     return null;
   } finally {
     btn.disabled = false;
@@ -1994,11 +2001,72 @@ $('varList').addEventListener('click', e => {
   const li = e.target.closest('li[data-var]');
   if (li) showVariation(li.dataset.var);
 });
+// [VarN] in an answer opens the variation on a small board right under it (no scrolling up to the big board);
+// ▶ Đặt lên bàn cờ then plays it on the board itself
+function variationPreview(v) {
+  const saved = koBoard;
+  koBoard = null;   // playMove checks the ko against the big board's: not this one's
+  try {
+    let board = scan.matrix;
+    for (const p of v.start) {
+      if (!p.color) { board = clone(board); board[p.r][p.c] = 0; continue; }
+      const next = playMove(board, p.r, p.c, p.color);
+      if (typeof next !== 'string') board = next;
+    }
+    const nums = [];
+    v.moves.forEach((mv, k) => {
+      const rc = pointRC(mv.point), next = rc && playMove(board, rc[0], rc[1], mv.color === 'B' ? 1 : 2);
+      if (!rc || typeof next === 'string') return;
+      board = next;
+      nums.push({ r: rc[0], c: rc[1], n: k + 1, color: mv.color === 'B' ? 1 : 2 });
+    });
+    return { board, nums };
+  } finally { koBoard = saved; }
+}
+function previewSvg(board, nums) {
+  const n = board.length;
+  let h = `<svg viewBox="-1 -1 ${n + 1} ${n + 1}" aria-hidden="true"><rect x="-1" y="-1" width="${n + 1}" height="${n + 1}" fill="var(--wood)"/>`;
+  for (let i = 0; i < n; i++) {
+    h += `<line x1="0" y1="${i}" x2="${n - 1}" y2="${i}" stroke="var(--wood-line)" stroke-width=".04"/><line x1="${i}" y1="0" x2="${i}" y2="${n - 1}" stroke="var(--wood-line)" stroke-width=".04"/>`;
+  }
+  board.forEach((row, r) => row.forEach((v, c) => {
+    if (v) h += `<circle cx="${c}" cy="${r}" r=".46" fill="${v === 1 ? '#141414' : '#fafafa'}" stroke="#333" stroke-width=".03"/>`;
+  }));
+  const shown = new Map();
+  nums.forEach(x => shown.set(x.r * n + x.c, x));   // a point played twice shows its last number
+  for (const x of shown.values()) {
+    if (board[x.r][x.c] !== x.color) continue;     // captured later in the line
+    if (x.n === 1) h += `<circle cx="${x.c}" cy="${x.r}" r=".5" fill="none" stroke="var(--ok)" stroke-width=".09"/>`;
+    h += `<text x="${x.c}" y="${x.r + .18}" font-size=".5" font-weight="700" text-anchor="middle" fill="${x.color === 1 ? '#fff' : '#141414'}">${x.n}</text>`;
+  }
+  return h + '</svg>';
+}
 $('coachLog').addEventListener('click', e => {
+  const retry = e.target.closest('[data-retry]');
+  if (retry) {   // the question again, in place of the failed exchange
+    const msg = retry.closest('.msg'), { q, body } = msg._retry;
+    msg.previousElementSibling?.remove(); msg.remove();
+    if (body.board) askCoach(q); else chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body });
+    return;
+  }
+  const show = e.target.closest('[data-show]');
+  if (show) { showVariation(show.dataset.show); return; }
   const a = e.target.closest('a[data-var]');
   if (!a) return;
   e.preventDefault();
-  showVariation(a.dataset.var);
+  const msg = a.closest('.msg'), name = a.dataset.var;
+  const open = msg.querySelector(`.varprev[data-var="${name}"]`);
+  msg.querySelectorAll('.varprev').forEach(x => x.remove());
+  if (open) return;   // a second tap closes it
+  const v = variations.find(x => x.name === name);
+  if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return; }
+  const { board, nums } = variationPreview(v);
+  const box = document.createElement('div');
+  box.className = 'varprev';
+  box.dataset.var = name;
+  box.innerHTML = `<div><b>${esc(name)}</b>${v.title ? ' · ' + esc(v.title) : ''}</div>${previewSvg(board, nums)}
+    <div class="pv">${varMoves(v)}</div><button type="button" class="src" data-show="${esc(name)}">▶ Đặt lên bàn cờ</button>`;
+  (a.closest('p, ul, ol') || msg.lastElementChild).after(box);
 });
 $('varBack').addEventListener('click', () => {
   if (!activeVar) return;

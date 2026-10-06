@@ -26,6 +26,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 
 import feedback
+import usage
 
 log = logging.getLogger('telegram')
 
@@ -47,6 +48,7 @@ HELP = """Lệnh cho admin Go Scan:
 /reply <id> <nội dung> – đăng / thay câu trả lời công khai
 /unreply <id> – gỡ câu trả lời
 /autoreply [on|off] – bật / tắt tự trả lời góp ý mới
+/usage – tài nguyên đã dùng, chi phí dự kiến tháng này (báo tự động 8 giờ sáng)
 Hoặc nhắn câu hỏi bất kỳ, ví dụ "người dùng phàn nàn gì nhiều nhất?"."""
 
 SUMMARY_PROMPT = """Bạn là trợ lý phân tích góp ý người dùng cho Go Scan, ứng dụng nhận dạng bàn cờ vây từ ảnh, \
@@ -79,6 +81,12 @@ def send(chat_id, text):
             log.warning('sendMessage to %s failed: %s', chat_id, ex)
             return
         text = text[len(part):].lstrip('\n')
+
+
+def send_admins(text):
+    if configured():
+        for c in ADMIN_IDS:
+            send(c, text)
 
 
 def send_photos(chat_id, r):
@@ -214,6 +222,8 @@ def handle(chat_id, text):
             return f'Đã xoá góp ý #{r["id"][:8]}.'
         feedback.set_hidden(r['id'], cmd == '/hide')
         return f'Đã {"ẩn" if cmd == "/hide" else "hiện lại"} góp ý #{r["id"][:8]} trên trang public.'
+    if cmd == '/usage':
+        return usage.report()[0]
     if cmd == '/autoreply':
         if arg.lower() in ('on', 'off'):
             feedback.set_auto_reply(arg.lower() == 'on')
@@ -282,6 +292,7 @@ def set_webhook(url):
         {'command': 'stats', 'description': 'Thống kê góp ý'},
         {'command': 'summary', 'description': 'AI tổng hợp góp ý'},
         {'command': 'autoreply', 'description': 'Bật / tắt tự trả lời góp ý'},
+        {'command': 'usage', 'description': 'Tài nguyên và chi phí tháng này'},
         {'command': 'help', 'description': 'Các lệnh'},
     ]}))
 

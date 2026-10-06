@@ -45,6 +45,18 @@ Caddy cho riêng đường dẫn `/telegram/webhook` đi thẳng vào app, khôn
 secret đã đăng ký với Telegram và chỉ trả lời chat id của admin. Webhook là `https://<DOMAIN>/telegram/webhook`. Nếu dùng Cloudflare Access thì thêm
 policy **Bypass** cho đường dẫn đó.
 
+## Báo cáo tài nguyên và chi phí
+
+Mỗi sáng 8 giờ (giờ Việt Nam) bot gửi cho admin số liệu của ngày hôm trước và tháng này (`usage.py`, lệnh `/usage`
+để xem ngay): giờ GPU Modal của KataGo (app tự đo thời gian mỗi lần gọi, cộng 2 phút GPU chờ trước khi tắt) và chi phí
+quy ra đô la so với phần miễn phí hằng tháng của Modal, lượt gọi từng model AI và số lần hết lượt miễn phí (429), giọng
+nói, giờ OCPU / RAM của VM Oracle so với mức Always Free, ổ đĩa, số người dùng. Chi phí cả tháng (theo dương lịch) được
+dự kiến theo nhịp đã dùng; ngân sách mặc định là 0 (chỉ dùng gói miễn phí). Bot cảnh báo ngay (mỗi cảnh báo một lần
+một ngày) khi đã hoặc sắp vượt ngân sách, khi Modal dự kiến dùng quá 80 % phần miễn phí, khi giờ GPU 7 ngày qua tăng
+mạnh, khi nhiều lần hết lượt AI miễn phí hoặc ổ đĩa quá 80 %. Số liệu ở `/srv/go-scan/usage/<YYYY-MM>.json`.
+Tham số: `USAGE_BUDGET_USD`, `MODAL_FREE_CREDIT_USD` (30), `MODAL_GPU_USD_PER_HOUR` (0,80), `ORACLE_FREE_OCPU_HOURS`
+(1500), `ORACLE_FREE_GB_HOURS` (9000).
+
 ## Thêm / cập nhật sách
 
 1. Đặt file vào `books/src/Go Books/…`, khai báo trong `rag/catalog.py` (sách scan: chạy `scripts/ocr-books.sh` trước).

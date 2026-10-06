@@ -80,6 +80,7 @@ flowchart LR
 | Hỏi bằng giọng nói | Trình duyệt tự nhận giọng (Chrome, Safari, `vi-VN`); không có thì ghi âm → `/api/stt` → Groq Whisper (dự phòng Gemini). Câu trả lời đọc bằng giọng tiếng Việt của máy (`speechSynthesis`) |
 | Góp ý | `/api/feedback` → `/srv/go-scan/feedback`; luồng nền: AI viết câu trả lời công khai (chuỗi `feedback`, câu mẫu khi AI lỗi) → bot báo admin qua Telegram |
 | Bot admin | Telegram → Caddy (`/telegram/webhook`, không qua đăng nhập) → app kiểm tra secret + chat id admin → lệnh `/reviews`, `/summary`, `/reply`, `/draft`, `/autoreply`… |
+| Báo cáo tài nguyên | app đếm giờ GPU Modal, lượt AI, giọng nói (`usage.py` → `/srv/go-scan/usage`) → 8 giờ sáng bot gửi admin số liệu, chi phí dự kiến tháng, cảnh báo vượt ngân sách (0) |
 
 ## Vận hành
 
@@ -89,6 +90,8 @@ flowchart LR
 - Bí mật chỉ nằm trong `deploy/oracle/.env` trên VM: Google OAuth, cookie, Gemini, Qdrant, Groq, OpenRouter, Mistral,
   Modal token, Telegram (token, webhook secret, chat id admin). Bản sao dự phòng của Modal / Telegram token còn trong
   Secret Manager của project Google Cloud (project đó vẫn giữ OAuth client "Go Scan Oracle").
+- oauth2-proxy chờ app tối đa 240 s (`OAUTH2_PROXY_UPSTREAM_TIMEOUT`): câu hỏi về thế cờ khi GPU Modal khởi động nguội
+  lâu hơn mặc định 30 s, trước đây bị cắt thành lỗi 502.
 - Đổi webhook bot (khi đổi tên miền): `docker compose … exec app python -m telegram_bot set-webhook https://<DOMAIN>/telegram/webhook`.
 - Dữ liệu người dùng chỉ có ở `/srv/go-scan` trên VM (file do container ghi, chủ sở hữu root): nên bật backup policy
   cho boot volume.
