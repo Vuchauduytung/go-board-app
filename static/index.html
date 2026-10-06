@@ -1871,14 +1871,24 @@ async function speak(text) {
   stopSpeaking();
   const all = speakable(text);
   if (!all) return;
-  const gen = ++speakGen, chunks = sentences(all, 280);
+  // the first sentence alone, so the voice starts soon; AHEAD_CLIPS pieces fetched at once while one plays
+  const first = (all.match(/^[^.!?;:]+[.!?;:]*\s*/) || [all])[0];
+  const gen = ++speakGen, chunks = [first.trim().slice(0, 590), ...sentences(all.slice(first.length), 280)].filter(Boolean);
+  const clips = [], AHEAD_CLIPS = 3;
+  const clip = i => {
+    for (let j = i; j < Math.min(chunks.length, i + AHEAD_CLIPS); j++) {
+      if (!clips[j]) { clips[j] = fetchClip(chunks[j]); clips[j].catch(() => {}); }
+    }
+    return clips[i];
+  };
   $('speakStop').hidden = false;
-  let next = fetchClip(chunks[0]);
+  voiceMsg('info', '<span class="spinner"></span>Đang tạo giọng đọc…');
   for (let i = 0; i < chunks.length; i++) {
     let blob;
-    try { blob = await next; } catch (e) { if (gen === speakGen) speakDevice(chunks.slice(i), gen, e.message); return; }
+    try { blob = await clip(i); } catch (e) { if (gen === speakGen) { voiceMsg(); speakDevice(chunks.slice(i), gen, e.message); } return; }
     if (gen !== speakGen) return;
-    if (i + 1 < chunks.length) { next = fetchClip(chunks[i + 1]); next.catch(() => {}); }
+    if (i === 0) voiceMsg();
+    clip(i + 1);
     const url = URL.createObjectURL(blob);
     try { await playClip(url); }
     catch (e) {
