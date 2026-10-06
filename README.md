@@ -27,8 +27,10 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   tạo (`tts.py`: Microsoft HoaiMy qua edge-tts, dự phòng Google; giọng của máy chỉ khi server lỗi).
 - Đánh với AI (🤖 Đánh với AI): cấp 5k–5d. Mỗi lượt KataGo tìm ~40 ứng viên, AI rút một nước sao cho trung bình mất
   đúng số điểm của cấp đó (`bot.py`, bảng `LEVELS` = điểm mất trung bình mỗi nước, điểm mất tối đa một nước; chỉnh ở
-  đó). Thanh ván đấu hiện điểm mất trung bình mỗi nước của AI và của người chơi để hiệu chỉnh; bỏ lượt, đi lại, xin
-  thua, đếm điểm bằng KataGo. Ván được lưu như mọi ván khác (`play` trong session, `POST /api/play`). Trong lúc
+  đó hoặc qua biến `BOT_LEVELS`; nước KataGo chỉ xem qua 1–2 lượt bị tính là mất thêm `UNSURE / √lượt`). Thanh ván
+  đấu hiện điểm mất trung bình mỗi nước của AI và của người chơi để hiệu chỉnh; bỏ lượt, đi lại, xin thua. Hết ván
+  (hai lần bỏ lượt hoặc "Đếm điểm") là **đếm đất** (`score.py`, `POST /api/score`): KataGo đánh dấu quân chết và đất,
+  chạm một nhóm để đổi chết ↔ sống, tính theo luật Trung Quốc (quân sống + đất, Trắng cộng komi). Ván được lưu như mọi ván khác (`play` trong session, `POST /api/play`). Trong lúc
   đánh, mọi thế cờ được KataGo tìm với đúng thông số của review (lượt AI khi chọn nước, lượt người chơi chạy ngầm
   với `think: true`, không hiện ra), nên hết ván bấm **📋 Review ván này** (`POST /api/sessions/{id}/play/review`)
   là review gần như ngay, lấy từ cache của ván.

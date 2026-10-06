@@ -165,6 +165,10 @@
   #followHint { font-size: 12px; margin: -2px 0 8px; }
   .vsbar { background: #f6f1e8; border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin: 0 0 10px; font-size: 14px; }
   .vsbar .over { margin-top: 6px; font-weight: 700; color: var(--accent); }
+  .vsscore { margin-top: 8px; padding: 8px 10px; border-radius: 9px; background: var(--card); border: 1px solid var(--line); }
+  .vsscore table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0; }
+  .vsscore td { padding: 2px 4px; text-align: right; } .vsscore td:first-child { text-align: left; }
+  .vsscore .res { font-weight: 700; margin-top: 4px; }
   .vsbar .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .vsbar .acts button { flex: 1; min-width: 70px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
                         border-radius: 9px; padding: 8px 6px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -307,6 +311,7 @@
       <div id="vsInfo"></div>
       <div class="muted" id="vsStats"></div>
       <div class="over" id="vsOver" hidden></div>
+      <div class="vsscore" id="vsScore" hidden></div>
       <div class="acts">
         <button type="button" id="vsPass">Bỏ lượt</button>
         <button type="button" id="vsUndo">↶ Đi lại</button>
@@ -431,6 +436,7 @@ let session = null;   // review session on screen: {id, title, pinned}; created 
 let game = null;      // game record of a session imported from SGF: {moves: [["B", "Q16" | "pass"]], komi, …}
 let kataLine = null; // KataGo's best line over the board, see "follow KataGo" below
 let play = null;      // a game against the AI on this board, see "game against the AI" below
+let scoring = null;   // counting the end of a game: {len (stones counted), toggles, res, busy, confirmed}
 let followMode = 'branch'; // what ▶ ▶▶ ⏭ follow: 'branch' (the lit line of the tree) or 'kata' (KataGo's best moves)
 let matrix = null;    // current (possibly edited) matrix
 let toPlay = 'B';     // side to move: 'B' | 'W'
@@ -498,7 +504,7 @@ function startBoard(start) {
   matrix = clone(start.matrix);
   played = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
   tree = newNode(null, null); cur = tree;
-  kataLine = null; followMode = 'branch'; play = null;
+  kataLine = null; followMode = 'branch'; play = null; scoring = null;
   session = null;
   game = null;
   clearSugg();
@@ -566,6 +572,21 @@ function render() {
     const x = m + p.c * s, y = m + p.r * s, no = activeVar ? i - activeVar.from + 1 : nums[i];
     if (i === lastI) h += `<circle cx="${x}" cy="${y}" r="15.5" fill="none" stroke="var(--accent)" stroke-width="2.5" pointer-events="none"/>`;
     if (history) h += `<text x="${x}" y="${y + 4}" font-size="${no > 99 ? 10 : 12}" font-weight="700" text-anchor="middle" fill="${p.color === 1 ? '#fff' : '#141414'}" pointer-events="none">${no}</text>`;
+  }
+  if (scoring && scoring.len !== played.length) scoring = null;   // the board moved on from the counted position
+  if (scoring?.res) {   // counting: territory as small squares, dead stones faded and crossed
+    const dead = new Set(scoring.res.dead.map(([r, c]) => r * n + c));
+    for (const [r, c] of scoring.res.dead) {
+      const x = m + c * s, y = m + r * s;
+      h += `<circle cx="${x}" cy="${y}" r="14" fill="var(--wood)" opacity=".6" pointer-events="none"/>`;
+      h += `<path d="M${x - 5} ${y - 5}L${x + 5} ${y + 5}M${x + 5} ${y - 5}L${x - 5} ${y + 5}" stroke="var(--err)" stroke-width="2" pointer-events="none"/>`;
+    }
+    for (const [who, fill] of [['B', '#141414'], ['W', '#fafafa']]) {
+      for (const [r, c] of scoring.res.territory[who]) {
+        if (dead.has(r * n + c)) continue;
+        h += `<rect x="${m + c * s - 5}" y="${m + r * s - 5}" width="10" height="10" fill="${fill}" stroke="#333" stroke-width=".6" pointer-events="none"/>`;
+      }
+    }
   }
   for (const k of coachMarks) {
     const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
@@ -689,6 +710,10 @@ $('board').addEventListener('click', e => {
     $('pickPoint').classList.remove('on');
     askCoach(`Nước ${pointName(r, c)} có tốt không? Giải thích vì sao.`);
     render();
+    return;
+  }
+  if (scoring && !scoring.confirmed) {   // counting: a tap on a group flips it dead / alive
+    if (matrix[r][c] && !scoring.busy) { scoring.toggles.push([r, c]); fetchScore(); }
     return;
   }
   const playing = play && !play.over;
@@ -1421,7 +1446,9 @@ function renderPlay() {
   $('vsStats').textContent = `Mất trung bình mỗi nước: AI ${avg(play.ai_losses)} điểm (${play.ai_losses.length} nước) · bạn ${avg(play.user_losses)} điểm (${play.user_losses.length} nước)`;
   $('vsOver').hidden = !play.over;
   $('vsOver').textContent = play.over || '';
-  $('vsPass').disabled = $('vsResign').disabled = $('vsCount').disabled = !playing || play.thinking || toPlay === play.ai;
+  const counting = !!(scoring && !scoring.confirmed);
+  $('vsPass').disabled = $('vsResign').disabled = $('vsCount').disabled = !playing || play.thinking || toPlay === play.ai || counting;
+  renderScore();
   $('vsAi').disabled = !playing || play.thinking || toPlay !== play.ai;
   $('vsUndo').disabled = !playing || play.thinking || !cur.parent;
   $('vsReview').hidden = !play.over || !!game;
@@ -1566,24 +1593,63 @@ $('vsUndo').addEventListener('click', () => {   // back to the player's previous
   thinkAhead();
 });
 
-// The result as KataGo sees the position (komi included): who is ahead and by how much
-async function countScore() {
+// Counting at the end (two passes, or 'Đếm điểm'): KataGo's ownership marks the dead stones and the territory;
+// a tap on a group flips it dead / alive and the count is made again; then the player confirms or plays on
+function countScore() {
   if (!play) return;
-  const g = play;
-  g.thinking = true; render();
+  scoring = { len: played.length, toggles: [], res: null, busy: false, confirmed: false };
+  render();
+  fetchScore();
+  $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+async function fetchScore() {
+  const sc = scoring;
+  sc.busy = true; render();
   try {
-    const j = await apiJson('api/analyze', { method: 'POST', body: { matrix, to_play: toPlay, komi: komi(), session_id: session?.id } });
-    const black = toPlay === 'B' ? j.score_lead : -j.score_lead, winner = black >= 0 ? 'B' : 'W';
-    const pts = Math.max(0.5, Math.round(Math.abs(black) * 2) / 2);
-    g.over = `Hết ván: ${NAME[winner]} thắng ${pts} điểm (KataGo ước tính, komi ${g.komi}) · ${winner === g.ai ? `AI ${g.level} thắng` : 'bạn thắng!'}`;
-    setStatus('ok', g.over);
+    sc.res = await apiJson('api/score', { method: 'POST', body: { ...kataHistory(), komi: komi(), toggles: sc.toggles, session_id: session?.id } });
   } catch (err) {
-    setStatus('err', 'Chưa đếm được điểm: ' + esc(err.message));
+    setStatus('err', 'Chưa đếm được: ' + esc(err.message));
   } finally {
-    g.thinking = false; render(); saveSoon();
+    sc.busy = false;
+    if (scoring === sc) render();
   }
 }
-$('vsCount').addEventListener('click', () => { if (play && !play.over && confirm('Kết thúc ván và đếm điểm bằng KataGo?')) countScore(); });
+function scoreText(res) {
+  const lead = res.lead, winner = lead >= 0 ? 'B' : 'W';
+  return `${NAME[winner]} thắng ${Math.abs(lead)} điểm`;
+}
+function renderScore() {
+  const box = $('vsScore');
+  box.hidden = !scoring;
+  if (!scoring) return;
+  const r = scoring.res;
+  if (!r) { box.innerHTML = '<span class="spinner"></span>Đang đếm đất…'; return; }
+  box.innerHTML = `<b>Đếm đất</b> <span class="muted">(luật Trung Quốc: quân sống + đất)</span>
+    <table><tr><td></td><td>Quân</td><td>Đất</td><td>Komi</td><td>Tổng</td></tr>
+    <tr><td>⚫ Đen</td><td>${r.black.stones}</td><td>${r.black.territory}</td><td></td><td><b>${r.black.total}</b></td></tr>
+    <tr><td>⚪ Trắng</td><td>${r.white.stones}</td><td>${r.white.territory}</td><td>${r.white.komi}</td><td><b>${r.white.total}</b></td></tr></table>
+    <div class="res">${scoreText(r)}${r.dead.length ? ` · ${r.dead.length} quân chết (gạch chéo)` : ''}${r.dame.length ? ` · ${r.dame.length} điểm chưa ngã ngũ` : ''}</div>
+    ${scoring.confirmed ? '' : `<div class="muted">Chạm một nhóm quân để đổi chết ↔ sống nếu máy đánh dấu sai.</div>
+    <div class="acts"><button type="button" data-sc="ok"${scoring.busy ? ' disabled' : ''}>✓ Xác nhận kết quả</button><button type="button" data-sc="resume">↩ Tiếp tục đánh</button></div>`}`;
+}
+$('vsScore').addEventListener('click', e => {
+  const act = e.target.closest('button')?.dataset.sc;
+  if (!act || !scoring || !play) return;
+  if (act === 'ok' && scoring.res) {
+    const r = scoring.res, winner = r.lead >= 0 ? 'B' : 'W';
+    scoring.confirmed = true;
+    play.over = `Hết ván: Đen ${r.black.total} · Trắng ${r.white.total} → ${scoreText(r)} · ${winner === play.ai ? `AI ${play.level} thắng` : 'bạn thắng!'}`;
+    play.score = { black: r.black, white: r.white, lead: r.lead, dead: r.dead.length };
+    setStatus('ok', play.over);
+  } else if (act === 'resume') {
+    scoring = null;
+    play.passes = 0;
+    setStatus('info', 'Tiếp tục ván đấu.');
+    if (toPlay === play.ai) setTimeout(aiMove);
+  }
+  render(); saveSoon();
+});
+$('vsCount').addEventListener('click', () => { if (play && !play.over && confirm('Kết thúc ván và đếm đất?')) countScore(); });
 
 // ---- signed-in user and today's usage ----
 function showMe(m) {

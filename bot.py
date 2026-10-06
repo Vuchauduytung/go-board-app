@@ -4,18 +4,27 @@
 # level's (a quiet position lets any reasonable move through, a life-and-death one makes a weak level err now and
 # then). A move losing more than the level's cap is never chosen.
 #
-# Calibrate here: LEVELS[level] = (average points lost per move, most points a single move may lose).
+# Calibrate here: LEVELS[level] = (average points lost per move, most points a single move may lose), or without a
+# code change in the environment: BOT_LEVELS='{"1k": [0.8, 7], …}' (levels given there replace these).
 # The app shows the AI's and the player's average loss per move during a game, to compare with the table.
+# A barely searched candidate usually loses more than its score says (KataGo looked at it once or twice because it
+# thought little of it): each candidate's loss gets UNSURE / sqrt(visits) more than the best move's, so such moves
+# are drawn as the mediocre moves they are. Without it every level played several stones weaker than its name
+# (first table, 1k ≈ 3–5k); leaving them out instead made every level play like a pro.
 
+import json
 import math
+import os
 import random
 
 import coach
 
 LEVELS = {
-    '5k': (2.2, 30), '4k': (1.9, 25), '3k': (1.65, 20), '2k': (1.45, 16), '1k': (1.25, 13),
-    '1d': (1.05, 10), '2d': (0.9, 8), '3d': (0.75, 6), '4d': (0.6, 4.5), '5d': (0.45, 3),
+    '5k': (1.5, 15), '4k': (1.35, 13), '3k': (1.2, 11), '2k': (1.05, 9.5), '1k': (0.92, 8),
+    '1d': (0.8, 7), '2d': (0.68, 6), '3d': (0.57, 5), '4d': (0.47, 4), '5d': (0.38, 3),
 }
+LEVELS.update({k: tuple(v) for k, v in json.loads(os.environ.get('BOT_LEVELS') or '{}').items()})
+UNSURE = 1.5        # points added to the loss of a move searched once (less for more visits, see above)
 SEARCH = coach.ROOT   # the review's own full search, so a finished game is reviewed from what was searched
 RELIABLE = 0.1      # the best move is taken among candidates with at least this share of the top visits
 RESIGN_WINRATE = 0.02
@@ -53,7 +62,9 @@ def choose(res, level, rnd=random):
         return {'move': 'pass', 'loss': 0.0, 'alternatives': [], 'best': None, 'best_lead': None,
                 'score_lead': res['score_lead'], 'winrate': res['winrate'], 'resign': False}
     best_move = best(res)
-    cands = sorted(((max(0.0, best_move['score_lead'] - m['score_lead']), m) for m in moves), key=lambda x: x[0])
+    sure = UNSURE / math.sqrt(best_move['visits'])
+    cands = sorted(((max(0.0, best_move['score_lead'] - m['score_lead'] + UNSURE / math.sqrt(max(1, m['visits'])) - sure), m)
+                    for m in moves), key=lambda x: x[0])
     allowed = [(l, m) for l, m in cands if l <= cap] or cands[:1]
     t = _temperature([l for l, _ in allowed], target)
     pick = rnd.choices(range(len(allowed)), weights=[math.exp(-l / t) for l, _ in allowed])[0]

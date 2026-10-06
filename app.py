@@ -15,6 +15,7 @@
 #   POST /api/stt         voice question -> text, for browsers without speech recognition
 #   POST /api/tts         a piece of an answer -> MP3 read in Vietnamese (tts.py)
 #   POST /api/play        the AI's move at a level from 5k to 5d (bot.py)
+#   POST /api/score       counting a finished game: dead stones, territory, result (score.py)
 #   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
@@ -47,6 +48,7 @@ import bot
 import coach
 import kgcache
 import review
+import score
 import feedback
 import sessions
 import telegram_bot
@@ -795,6 +797,39 @@ def play_move(body: PlayIn, user: str = Depends(current_user)):
     out = bot.choose(res, body.level)
     out['resign'] = bot.should_resign(res, len(body.moves))
     return out
+
+
+class ScoreIn(BaseModel):
+    matrix: List[List[int]]          # as PlayIn: the start and the moves up to the position counted
+    to_play: str
+    moves: List[List[str]] = []
+    komi: float = 7.5
+    toggles: List[List[int]] = []    # points of groups the player says are alive / dead against KataGo
+    session_id: Optional[str] = None
+
+
+@app.post('/api/score')
+def score_game(body: ScoreIn, user: str = Depends(current_user)):
+    """Counting at the end of a game: KataGo's ownership finds the dead stones, the player can flip groups."""
+    _check_board(body.matrix, body.to_play)
+    _own_session(user, body.session_id)
+    n = len(body.matrix)
+    if len(body.moves) > 1000 or any(len(m) != 2 or m[0] not in ('B', 'W') or
+                                      (m[1] != 'pass' and coach.parse_point(m[1], n) is None) for m in body.moves):
+        raise HTTPException(400, 'Nước đi không hợp lệ')
+    if len(body.toggles) > n * n or any(len(t) != 2 or not (0 <= t[0] < n and 0 <= t[1] < n) for t in body.toggles):
+        raise HTTPException(400, 'Điểm không hợp lệ')
+    payload = {'matrix': body.matrix, 'to_play': body.to_play, 'moves': body.moves, 'komi': body.komi, **coach.ROOT}
+    try:
+        res = _katago_for(user, body.session_id)(payload)   # the very search the game made of this position
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    except KataGoError as ex:
+        raise HTTPException(ex.status, str(ex))
+    board, nxt, _ = coach.final_position(body.matrix, body.to_play, body.moves)
+    sign = 1 if res.get('to_play', nxt) == 'B' else -1
+    own = [[sign * v for v in row] for row in res['ownership']]
+    return score.count(board, own, body.komi, [tuple(t) for t in body.toggles])
 
 
 class PlayReviewIn(BaseModel):
