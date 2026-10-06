@@ -13,6 +13,7 @@
 #   /api/feedback         reviews of the app: public list, post (optionally anonymous), delete one's own;
 #                         admins reply publicly (new reviews get an LLM reply first, see feedback.py)
 #   POST /api/stt         voice question -> text, for browsers without speech recognition
+#   POST /api/tts         a piece of an answer -> MP3 read in Vietnamese (tts.py)
 #   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
@@ -503,6 +504,25 @@ def unreply_feedback(rid: str, user: str = Depends(current_user)):
 def draft_feedback_reply(rid: str, user: str = Depends(current_user)):
     """A reply written by the LLM for the admin to edit; not published."""
     return {'text': feedback.draft_reply(_admin_review(rid, user))}
+
+
+class TtsIn(BaseModel):
+    text: str
+
+
+@app.post('/api/tts')
+def text_to_speech(body: TtsIn, user: str = Depends(current_user)):
+    """MP3 of a piece of an answer read aloud in Vietnamese (the browser asks sentence by sentence)."""
+    import tts
+    from fastapi.responses import Response
+    text = body.text.strip()
+    if not text or len(text) > tts.TEXT_MAX:
+        raise HTTPException(400, f'Đoạn đọc phải có từ 1 đến {tts.TEXT_MAX} ký tự')
+    try:
+        audio = tts.synthesize(text)
+    except tts.Unavailable as ex:
+        raise HTTPException(503, str(ex))
+    return Response(audio, media_type='audio/mpeg', headers={'Cache-Control': 'private, max-age=86400'})
 
 
 STT_BYTES_MAX = 3_000_000   # ~1 minute of compressed audio

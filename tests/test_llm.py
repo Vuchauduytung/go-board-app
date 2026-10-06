@@ -45,3 +45,18 @@ def test_all_failing_raises(keys, monkeypatch):
     monkeypatch.setattr(llm, '_call_openai', boom)
     with pytest.raises(llm.Unavailable):
         llm.generate('board', 's', [], 10)
+
+
+def test_tts_falls_back_and_caches(monkeypatch):
+    import tts
+    tts._cache.clear()
+    calls = []
+    monkeypatch.setattr(tts, '_edge', lambda t: calls.append('edge') or (_ for _ in ()).throw(RuntimeError('down')))
+    monkeypatch.setattr(tts, '_google', lambda t: calls.append('google') or b'mp3')
+    assert tts.synthesize('Xin  chào\n bạn') == b'mp3' and calls == ['edge', 'google']
+    assert tts.synthesize('Xin chào bạn') == b'mp3' and len(calls) == 2   # cached
+    monkeypatch.setattr(tts, '_google', lambda t: b'')
+    with pytest.raises(tts.Unavailable):
+        tts.synthesize('khác')
+    pieces = tts._pieces('Một câu ngắn. ' * 40, 190)
+    assert all(len(p) <= 190 for p in pieces) and ' '.join(pieces) == ('Một câu ngắn. ' * 40).strip()

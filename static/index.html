@@ -1502,6 +1502,7 @@ async function chatRequest(q, { log, btn, body = {}, waitText = 'Đang tra sách
 // voice: asked by voice, so the answer is read aloud too
 async function askCoach(q, { voice = false } = {}) {
   q = q.trim();
+  if ($('speakToggle').checked && !voice) unlockSpeech();   // still in the tap: lets the answer play later (iOS)
   if (!q || !matrix) return;
   $('coachQ').value = '';
   const board = { matrix, to_play: toPlay, komi: komi() };
@@ -1701,7 +1702,7 @@ $('coachSuggest').addEventListener('click', e => {
 // Answers are read by the browser's own Vietnamese voice.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const canRecord = () => !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
-const canSpeak = () => 'speechSynthesis' in window;
+const canSpeak = () => typeof Audio !== 'undefined' || 'speechSynthesis' in window;
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let listening = null;   // {stop()} while the microphone is on
 let useServerStt = !SR;
@@ -1835,57 +1836,110 @@ function speakable(text) {
     .replace(/\.\s*\./g, '.')
     .trim();
 }
-let viVoice = null;
+// Answers are read by the server's voice (/api/tts: natural, the same on every device), sentence by sentence, the
+// next one fetched while one plays; the device's own speech synthesis only when the server cannot
+const ttsAudio = new Audio();
+const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+let unlocked = false, speakGen = 0, clipDone = null;
+function unlockSpeech() {   // iOS plays sound only on an element first played during a tap
+  if (unlocked) return;
+  unlocked = true;
+  ttsAudio.src = SILENT;
+  ttsAudio.play().catch(() => {});
+}
+function sentences(all, size) {
+  const out = [];
+  for (const p of all.match(/[^.!?;:]+[.!?;:]*\s*/g) || [all]) {
+    if (out.length && (out[out.length - 1] + p).length < size) out[out.length - 1] += p;
+    else out.push(p);
+  }
+  return out.map(c => c.trim().slice(0, 590)).filter(Boolean);
+}
+const fetchClip = text => fetch('api/tts', { method: 'POST', body: JSON.stringify({ text }),
+  headers: { 'Content-Type': 'application/json', 'X-Client-Id': clientId } })
+  .then(r => r.ok ? r.blob() : r.json().catch(() => ({})).then(j => Promise.reject(new Error(j.detail || 'HTTP ' + r.status))));
+function playClip(url) {
+  return new Promise((resolve, reject) => {
+    clipDone = resolve;
+    ttsAudio.onended = () => resolve();
+    ttsAudio.onerror = () => reject(new Error('không phát được âm thanh'));
+    ttsAudio.src = url;
+    ttsAudio.play().catch(reject);
+  });
+}
+async function speak(text) {
+  stopSpeaking();
+  const all = speakable(text);
+  if (!all) return;
+  const gen = ++speakGen, chunks = sentences(all, 280);
+  $('speakStop').hidden = false;
+  let next = fetchClip(chunks[0]);
+  for (let i = 0; i < chunks.length; i++) {
+    let blob;
+    try { blob = await next; } catch (e) { if (gen === speakGen) speakDevice(chunks.slice(i), gen, e.message); return; }
+    if (gen !== speakGen) return;
+    if (i + 1 < chunks.length) { next = fetchClip(chunks[i + 1]); next.catch(() => {}); }
+    const url = URL.createObjectURL(blob);
+    try { await playClip(url); }
+    catch (e) {
+      if (gen === speakGen) {
+        voiceMsg('err', e.name === 'NotAllowedError' ? 'Trình duyệt chặn tự phát âm thanh: bấm <b>🔊 Nghe câu trả lời</b> dưới câu trả lời để nghe.'
+                                                     : 'Không phát được giọng đọc: ' + esc(e.message));
+        stopSpeaking();
+      }
+      return;
+    } finally { URL.revokeObjectURL(url); }
+    if (gen !== speakGen) return;
+  }
+  $('speakStop').hidden = true;
+}
+// The device's own voice, when the server's is not available
+let viVoice = null, utterances = [];
 function pickVoice() {
   const vs = speechSynthesis.getVoices().filter(v => /^vi/i.test(v.lang));
   viVoice = vs.find(v => /natural|online|google/i.test(v.name)) || vs[0] || null;
 }
-if (canSpeak()) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice); }
-let unlocked = false;
-function unlockSpeech() {   // iOS only speaks after a first utterance started by a tap
-  if (unlocked || !canSpeak()) return;
-  unlocked = true;
-  speechSynthesis.speak(new SpeechSynthesisUtterance(''));
-}
-function speak(text) {
-  if (!canSpeak()) return;
-  stopSpeaking();
-  const all = speakable(text);
-  if (!all) return;
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice); }
+function speakDevice(chunks, gen, why) {
+  if (!('speechSynthesis' in window)) { voiceMsg('err', 'Không đọc được câu trả lời: ' + esc(why)); stopSpeaking(); return; }
   if (!viVoice && speechSynthesis.getVoices().length) {
     voiceMsg('info', 'Máy chưa có giọng đọc tiếng Việt: cài <b>Google Text-to-Speech</b> (Android) hoặc thêm giọng Tiếng Việt trong Cài đặt › Trợ năng › Nội dung được đọc (iPhone).');
   }
-  const parts = all.match(/[^.!?;:]+[.!?;:]*\s*/g) || [all];
-  const chunks = [];
-  for (const p of parts) {
-    if (chunks.length && (chunks[chunks.length - 1] + p).length < 180) chunks[chunks.length - 1] += p;
-    else chunks.push(p);
-  }
-  chunks.forEach((c, i) => {
-    const u = new SpeechSynthesisUtterance(c.trim());
-    u.lang = 'vi-VN'; u.rate = 1.05;
-    if (viVoice) u.voice = viVoice;
-    if (i === chunks.length - 1) u.onend = u.onerror = () => { $('speakStop').hidden = true; };
-    speechSynthesis.speak(u);
-  });
-  $('speakStop').hidden = false;
+  setTimeout(() => {   // Chrome drops what is queued right after a cancel
+    if (gen !== speakGen) return;
+    utterances = chunks.map((c, i) => {   // kept referenced: Chrome stops when an utterance is garbage-collected
+      const u = new SpeechSynthesisUtterance(c);
+      u.lang = 'vi-VN'; u.rate = 1.05;
+      if (viVoice) u.voice = viVoice;
+      if (i === chunks.length - 1) u.onend = u.onerror = () => { if (gen === speakGen) $('speakStop').hidden = true; };
+      speechSynthesis.speak(u);
+      return u;
+    });
+  }, 200);
 }
 function stopSpeaking() {
-  if (canSpeak()) speechSynthesis.cancel();
+  speakGen++;
+  ttsAudio.pause();
+  clipDone?.(); clipDone = null;
+  if ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
+  utterances = [];
   $('speakStop').hidden = true;
 }
 $('speakStop').addEventListener('click', stopSpeaking);
 $('speakToggle').parentElement.hidden = !canSpeak();
 try { $('speakToggle').checked = localStorage.getItem('goscan-speak') === '1'; } catch (e) {}
 $('speakToggle').addEventListener('change', () => {
-  unlockSpeech();
-  if (!$('speakToggle').checked) stopSpeaking();
   try { localStorage.setItem('goscan-speak', $('speakToggle').checked ? '1' : '0'); } catch (e) {}
+  if (!$('speakToggle').checked) { stopSpeaking(); return; }
+  unlockSpeech();
+  const last = [...document.querySelectorAll('#coachLog .msg.a')].pop();   // read the latest answer right away
+  if (last?._answer) speak(last._answer);
 });
 $('coachLog').addEventListener('click', e => {
   const b = e.target.closest('.say');
-  if (b) speak(b.closest('.msg')._answer || '');
+  if (b) { unlockSpeech(); speak(b.closest('.msg')._answer || ''); }
 });
+
 
 // ---- reviews of the app: public, optionally anonymous; admins read them through the Telegram bot ----
 let rating = 0, me = null;

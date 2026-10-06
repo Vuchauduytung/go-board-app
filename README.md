@@ -23,7 +23,8 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   Trên bàn chỉ đánh số 10 nước gần nhất (số thật trong ván, nước cuối có vòng cam). Công tắc "Khi bấm ▶":
   🌳 Theo nhánh (đi theo nhánh đang sáng) hoặc 🤖 Theo KataGo (đi nước tốt nhất; 10 nước tiếp theo hiện mờ, viền xanh,
   tính trước theo đợt qua `POST /api/line`). Chạm một ứng viên của 💡 Gợi ý hoặc mở một lỗi của review là tự sang 🤖.
-- Hỏi bằng giọng nói, nghe trả lời bằng giọng tiếng Việt (nhận giọng trong trình duyệt, dự phòng `/api/stt`).
+- Hỏi bằng giọng nói (nhận giọng trong trình duyệt, dự phòng `/api/stt`), nghe trả lời bằng giọng tiếng Việt do server
+  tạo (`tts.py`: Microsoft HoaiMy qua edge-tts, dự phòng Google; giọng của máy chỉ khi server lỗi).
 - Góp ý (tab ⭐): AI tự trả lời công khai, admin trả lời tay trên web hoặc qua bot Telegram (`telegram_bot.py`).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
   tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi). Chạm số trên biến (hoặc ▶) để đi tiếp
@@ -71,5 +72,6 @@ Mở `http://<IP máy chủ>:8765` trên điện thoại (cùng Wi-Fi).
 | POST | `/api/chat/reset` | xoá lịch sử hội thoại |
 | GET | `/api/books/{id}/pages/{n}` | ảnh trang sách được trích dẫn |
 | POST | `/api/stt` | form `file` (ghi âm ≤ 3 MB) → `{text}` (giọng nói tiếng Việt → chữ) |
+| POST | `/api/tts` | JSON `{text}` (≤ 600 ký tự) → MP3 đọc tiếng Việt |
 | GET / POST | `/api/feedback` | góp ý công khai (kèm `reply`) / gửi góp ý (form `rating`, `text`, `anonymous`, `images`) |
 | POST / DELETE | `/api/feedback/{id}/reply` | admin: đăng `{text}` / gỡ câu trả lời; `POST …/reply/draft` → nháp do AI viết |
