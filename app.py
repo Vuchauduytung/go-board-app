@@ -10,7 +10,9 @@
 #   POST /api/chat        ask the Go books assistant (RAG over books/, see rag/); with a board: the coach
 #   GET  /api/me          signed-in user, role and today's usage
 #   /api/sessions         the user's review sessions: list, create, load, save, pin, delete
-#   /api/feedback         reviews of the app: public list, post (optionally anonymous), delete one's own
+#   /api/feedback         reviews of the app: public list, post (optionally anonymous), delete one's own;
+#                         admins reply publicly (new reviews get an LLM reply first, see feedback.py)
+#   POST /api/stt         voice question -> text, for browsers without speech recognition
 #   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
 #   GET  /                mobile web app
@@ -466,8 +468,66 @@ def post_feedback(rating: Optional[int] = Form(None), text: str = Form(''), anon
         raise HTTPException(400, str(ex))
     except feedback.TooMany as ex:
         raise HTTPException(429, str(ex))
-    telegram_bot.notify(r)
+    telegram_bot.on_new_review(r)   # auto reply + admins' Telegram, in the background
     return feedback.public(r, user)
+
+
+class ReplyIn(BaseModel):
+    text: str
+
+
+def _admin_review(rid, user):
+    if not accounts.is_admin(user):
+        raise HTTPException(403, 'Chỉ admin mới trả lời góp ý')
+    r = feedback.get(rid)
+    if not r:
+        raise HTTPException(404, 'Không tìm thấy góp ý')
+    return r
+
+
+@app.post('/api/feedback/{rid}/reply')
+def reply_feedback(rid: str, body: ReplyIn, user: str = Depends(current_user)):
+    _admin_review(rid, user)
+    if len(body.text.strip()) > feedback.REPLY_MAX:
+        raise HTTPException(400, f'Câu trả lời dài tối đa {feedback.REPLY_MAX} ký tự')
+    return feedback.public(feedback.set_reply(rid, body.text, user), user)
+
+
+@app.delete('/api/feedback/{rid}/reply')
+def unreply_feedback(rid: str, user: str = Depends(current_user)):
+    _admin_review(rid, user)
+    return feedback.public(feedback.set_reply(rid, '', user), user)
+
+
+@app.post('/api/feedback/{rid}/reply/draft')
+def draft_feedback_reply(rid: str, user: str = Depends(current_user)):
+    """A reply written by the LLM for the admin to edit; not published."""
+    return {'text': feedback.draft_reply(_admin_review(rid, user))}
+
+
+STT_BYTES_MAX = 3_000_000   # ~1 minute of compressed audio
+STT_TOKENS = 500            # counted against the daily AI budget per transcription
+
+
+@app.post('/api/stt')
+def speech_to_text(file: UploadFile = File(...), user: str = Depends(current_user)):
+    from rag import llm
+    try:
+        accounts.ensure(user, 'llm')
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    data = file.file.read(STT_BYTES_MAX + 1)
+    if len(data) > STT_BYTES_MAX:
+        raise HTTPException(400, 'Đoạn ghi âm dài quá, hỏi ngắn hơn nhé')
+    if len(data) < 1000:
+        raise HTTPException(400, 'Không nghe thấy gì, thử nói lại nhé')
+    mime = (file.content_type or 'audio/webm').split(';')[0].strip()
+    try:
+        text = llm.transcribe(data, mime)
+    except llm.Unavailable as ex:
+        raise HTTPException(503, str(ex))
+    accounts.add(user, 'llm', STT_TOKENS)
+    return {'text': text}
 
 
 @app.get('/api/feedback/{rid}/images/{k}')
@@ -491,6 +551,20 @@ def me(user: str = Depends(current_user)):
     return {**accounts.usage(user), 'pinned_limit': None if accounts.is_admin(user) else sessions.PINNED_LIMIT}
 
 
+class TreeNode(BaseModel):
+    p: int                     # parent: index of an earlier node, -1 = the starting position
+    r: int
+    c: int
+    color: int                 # as in Placed
+    was: Optional[int] = None
+    s: int = -1                # child on the highlighted line (index of a later node), -1 = none
+
+
+class MoveTree(BaseModel):
+    s: int = -1                # the starting position's child on the highlighted line
+    nodes: List[TreeNode] = []
+
+
 class SessionIn(BaseModel):
     base: List[List[int]]              # starting position: the photo's matrix or an empty board
     scan_id: Optional[str] = None
@@ -499,10 +573,12 @@ class SessionIn(BaseModel):
     start_turn: str = 'B'
     matrix: Optional[List[List[int]]] = None   # position on screen (list thumbnails)
     title: Optional[str] = None
+    tree: Optional[MoveTree] = None    # every line tried from the starting position; `played` is the one shown
 
 
 class SessionUpdate(BaseModel):
     played: Optional[List[Placed]] = None
+    tree: Optional[MoveTree] = None
     to_play: Optional[str] = None
     start_turn: Optional[str] = None
     matrix: Optional[List[List[int]]] = None
@@ -519,6 +595,17 @@ def _check_session(n, fields):
             raise HTTPException(400, 'Nước đi không hợp lệ')
     if len(fields.get('played') or []) > 2000:
         raise HTTPException(400, 'Quá nhiều nước đi')
+    if fields.get('tree') is not None:
+        t = fields['tree']
+        nodes = t['nodes']
+        if len(nodes) > sessions.TREE_MAX:
+            raise HTTPException(400, f'Cây nước đi quá lớn (tối đa {sessions.TREE_MAX} nước)')
+        if not -1 <= t['s'] < len(nodes) or (t['s'] >= 0 and nodes[t['s']]['p'] != -1):
+            raise HTTPException(400, 'Cây nước đi không hợp lệ')
+        for i, x in enumerate(nodes):
+            if not (-1 <= x['p'] < i and 0 <= x['r'] < n and 0 <= x['c'] < n and x['color'] in (0, 1, 2)
+                    and (x['s'] == -1 or (i < x['s'] < len(nodes) and nodes[x['s']]['p'] == i))):
+                raise HTTPException(400, 'Cây nước đi không hợp lệ')
     for k in ('to_play', 'start_turn'):
         if fields.get(k) is not None and fields[k] not in ('B', 'W'):
             raise HTTPException(400, f'{k} phải là B hoặc W')

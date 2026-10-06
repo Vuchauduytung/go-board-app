@@ -24,6 +24,7 @@ RECENT = 10
 PINNED_LIMIT = int(os.environ.get('SESSIONS_PINNED_LIMIT', '20'))
 CHAT_MAX = 100   # coach exchanges kept per session
 VARIATIONS_MAX = 200
+TREE_MAX = 5000  # moves in a session's move tree, every line together
 ID_RE = re.compile(r'^[0-9a-f]{32}$')
 _lock = threading.Lock()
 
@@ -125,9 +126,9 @@ def _change(user, sid, fn):
 
 
 def update(user, sid, fields):
-    """Board state (played, to_play, start_turn, matrix) and title; the starting position never changes."""
+    """Board state (played, tree, to_play, start_turn, matrix) and title; the starting position never changes."""
     def fn(s):
-        s.update({k: v for k, v in fields.items() if k in ('played', 'to_play', 'start_turn', 'matrix', 'title')})
+        s.update({k: v for k, v in fields.items() if k in ('played', 'tree', 'to_play', 'start_turn', 'matrix', 'title')})
         s['updated_at'] = time.time()
     return _change(user, sid, fn)
 

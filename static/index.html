@@ -160,6 +160,32 @@
   a.var.on { background: var(--accent); color: #fff; text-decoration: none; padding: 0 3px; }
   .vars h3 button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
                     padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .nav { display: flex; gap: 6px; }
+  .nav button { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
+                padding: 11px 0; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: -2px; }
+  .nav button:disabled { opacity: .35; cursor: default; }
+  .treehead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 6px; font-size: 13px; }
+  .treehead button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
+                     padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .treehead button:disabled { opacity: .4; cursor: default; }
+  #treeBox { overflow: auto; max-height: 164px; border: 1px solid var(--line); border-radius: 10px; background: #fbf8f2;
+             overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  #treeBox svg { display: block; }
+  #treeBox [data-t] { cursor: pointer; }
+  .ask .mic { width: 46px; height: auto; min-height: 46px; font-size: 19px; }
+  .ask .mic.on { background: var(--err); border-color: var(--err); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(179,38,30,.18); } }
+  .voicebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 14px; }
+  .voicebar button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
+                     padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  .msg .say { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
+              cursor: pointer; padding: 0; }
+  ul.reviews .reply { margin: 8px 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--accent); background: #f6f1e8;
+                      border-radius: 0 8px 8px 0; font-size: 14px; }
+  ul.reviews .reply .tx { margin-top: 2px; }
+  ul.reviews .racts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  ul.reviews .redit textarea { width: 100%; resize: vertical; padding: 9px; border-radius: 9px; border: 1px solid var(--line);
+                               font: inherit; background: var(--card); color: var(--ink); margin-top: 8px; }
   .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; flex-direction: column; z-index: 10;
             padding: calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom)); }
   .viewer .bar { display: flex; justify-content: space-between; align-items: center; color: #fff; gap: 10px; padding-bottom: 8px; }
@@ -243,11 +269,19 @@
         <button type="button" data-p="W">⚪ Tới Trắng</button>
       </div>
     </div>
-    <div class="row" id="playBar">
-      <button class="btn secondary" type="button" id="undo">↶ Lùi</button>
-      <button class="btn secondary" type="button" id="redo">↷ Tiến</button>
-      <button class="btn secondary" type="button" id="restart">↺ Ban đầu</button>
+    <div class="nav" id="navBar">
+      <button type="button" id="navFirst" title="Về thế cờ ban đầu (Home)">⏮</button>
+      <button type="button" id="navBack10" title="Lùi 10 nước">◀◀</button>
+      <button type="button" id="undo" title="Lùi 1 nước (←)">◀</button>
+      <button type="button" id="redo" title="Tiến 1 nước (→)">▶</button>
+      <button type="button" id="navFwd10" title="Tiến 10 nước">▶▶</button>
+      <button type="button" id="navLast" title="Tới cuối nhánh đang sáng (End)">⏭</button>
     </div>
+    <div class="treehead">
+      <span><b>🌳 Cây nước đi</b> <span class="muted" id="treeInfo"></span></span>
+      <button type="button" id="cutBranch" title="Xoá nước đang xem và mọi nước sau nó">✂ Xoá từ nước này</button>
+    </div>
+    <div id="treeBox"><svg id="tree" xmlns="http://www.w3.org/2000/svg"></svg></div>
     <button class="btn accent field" id="analyze">💡 Gợi ý nước đi cho Đen</button>
     <div id="sugg" hidden>
       <div class="wr">
@@ -282,9 +316,14 @@
       </div>
       <div class="chatlog" id="coachLog"></div>
       <form class="ask" id="coachForm">
+        <button class="icon mic" type="button" id="micBtn" title="Hỏi bằng giọng nói" hidden>🎤</button>
         <textarea id="coachQ" rows="1" maxlength="1000" placeholder="Ví dụ: Nước Q16 có tốt không?"></textarea>
         <button class="btn accent" id="coachBtn">Hỏi</button>
       </form>
+      <div class="voicebar">
+        <label><input type="checkbox" id="speakToggle"> 🔊 Đọc to câu trả lời</label>
+        <button type="button" id="speakStop" hidden>⏹ Dừng đọc</button>
+      </div>
       <div class="muted field" id="quota"></div>
     </div>
 
@@ -345,7 +384,6 @@ let sugg = null;      // response of /api/analyze for the current matrix + toPla
 // Stones placed on the photographed position (scan.matrix): corrections and tried moves alike
 let played = [];      // [{r, c, color}] in order; color 1|2 = stone placed, 0 = stone removed (long-press)
 let startTurn = 'B';  // colour selected when the first stone was placed
-let redoStack = [];   // moves taken back with Undo, most recent last
 let koBoard = null;   // position before the last move: re-creating it is a ko violation
 let coachMarks = [];  // moves judged by the coach chat: [{row, col, loss}]
 let pickMode = false; // next tap on the board asks the coach about that point
@@ -404,7 +442,8 @@ $('pick').addEventListener('change', onFile);
 function startBoard(start) {
   scan = start;
   matrix = clone(start.matrix);
-  played = []; redoStack = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
+  played = []; koBoard = null; toPlay = 'B'; startTurn = 'B';
+  tree = newNode(null, null); cur = tree;
   session = null;
   game = null;
   clearSugg();
@@ -439,6 +478,7 @@ function stars(n) {
 }
 
 function render() {
+  syncTree();
   const n = matrix.length, s = 30, m = 34, W = m * 2 + s * (n - 1);
   const svg = $('board');
   svg.setAttribute('viewBox', `0 0 ${W} ${W}`);
@@ -492,6 +532,7 @@ function render() {
   svg.innerHTML = h;
   updateModeUI();
   renderVars();
+  renderTree();
   $('nb').textContent = nb; $('nw').textContent = nw;
   $('matrixText').textContent = matrix.map(r => r.join(' ')).join('\n');
 }
@@ -502,11 +543,11 @@ const clone = m => m.map(row => row.slice());
 
 function updateModeUI() {
   $('modeHint').innerHTML = pickMode ? '📍 Chạm vào một điểm trên bàn cờ để hỏi về nước đó.'
-    : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>chạm giữ</b> một quân để xoá · <b>↶ Lùi</b> để hoàn tác.`;
+    : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>chạm giữ</b> một quân để xoá · <b>◀</b> để lùi; đi khác sau khi lùi sẽ mở nhánh mới.`;
   for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
-  $('undo').disabled = !played.length;
-  $('redo').disabled = !redoStack.length;
-  $('restart').disabled = !played.length && !redoStack.length;
+  for (const id of ['navFirst', 'navBack10', 'undo']) $(id).disabled = !cur.parent;
+  for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = !cur.sel;
+  $('cutBranch').disabled = !cur.parent;
   if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
 }
 
@@ -581,8 +622,7 @@ $('board').addEventListener('click', e => {
   }
   const who = toPlay;
   const err = place(r, c, who);
-  if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ↶ Lùi để bỏ quân vừa đặt.' : '')); return; }
-  redoStack = [];
+  if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ◀ để lùi.' : '')); return; }
   setStatus('info', `${NAME[who]} đặt ${pointName(r, c)} · tới lượt ${NAME[toPlay]}.`);
   clearSugg();
   render();
@@ -593,9 +633,8 @@ $('board').addEventListener('click', e => {
 let pressTimer = null, pressAt = null, suppressClick = false;
 function removeStone(r, c) {
   const was = takeOff(r, c);
-  redoStack = [];
   navigator.vibrate?.(30);
-  setStatus('info', `Đã xoá quân ${NAME[was === 1 ? 'B' : 'W']} ở ${pointName(r, c)} · <b>↶ Lùi</b> để đặt lại.`);
+  setStatus('info', `Đã xoá quân ${NAME[was === 1 ? 'B' : 'W']} ở ${pointName(r, c)} · <b>◀</b> để đặt lại.`);
   clearSugg();
   render();
   saveSoon();
@@ -630,35 +669,179 @@ function replay() {
   render();
 }
 
-$('undo').addEventListener('click', () => {
-  if (!played.length) return;
-  const p = played.pop();
-  redoStack.push(p);
-  if (p.color) toPlay = p.color === 1 ? 'B' : 'W';   // the removed stone's colour plays again
+// ---- move tree: every line tried from the starting position (the root); `played` is the path to the node on
+// screen. Each node remembers its child on the highlighted line (sel): ▶ and ⏭ follow it, playing a different move
+// after going back opens a new branch, a tap on the tree jumps to any node and lights its line ----
+let tree = newNode(null, null);   // root: the photo, the empty board or the SGF's setup, before any move
+let cur = tree;                    // node of the position on screen (kept in step with `played` by syncTree)
+let treeItems = [];                // nodes as drawn, for taps on the tree
+function newNode(m, parent) { return { m, parent, kids: [], sel: null }; }
+const sameMove = (a, b) => a.r === b.r && a.c === b.c && a.color === b.color;
+function childOf(node, m) {
+  let k = node.kids.find(x => sameMove(x.m, m));
+  if (!k) {
+    k = newNode(m.color ? { r: m.r, c: m.c, color: m.color } : { r: m.r, c: m.c, color: 0, was: m.was }, node);
+    node.kids.push(k);
+  }
+  return k;
+}
+// Put `entries` (from the root) in the tree and light that line; -> its last node
+function lightLine(entries) {
+  let node = tree;
+  for (const m of entries) { const k = childOf(node, m); node.sel = k; node = k; }
+  return node;
+}
+function syncTree() { cur = lightLine(played); }
+function pathTo(node) {
+  const out = [];
+  for (; node.parent; node = node.parent) out.push({ ...node.m });
+  return out.reverse();
+}
+const litLeaf = node => { while (node.sel) node = node.sel; return node; };
+const depthOf = node => { let d = 0; for (; node.parent; node = node.parent) d++; return d; };
+
+// Side to move at a position reached through the tree: from the game record on its line (passes), else after
+// the last stone placed, else the colour that started
+function turnAfter(entries) {
+  if (game) {
+    const line = gameStones(game.moves);
+    if (entries.length <= line.length && entries.every((p, i) => sameMove(p, line[i]))) {
+      let k = 0, stones = 0;
+      while (k < game.moves.length && stones < entries.length) { if (game.moves[k][1] !== 'pass') stones++; k++; }
+      if (k < game.moves.length) return game.moves[k][0];
+    }
+  }
+  const last = entries.filter(p => p.color).pop();
+  return last ? (last.color === 1 ? 'W' : 'B') : startTurn;
+}
+
+function goTo(node) {
+  if (node === cur) return;
+  const path = pathTo(node);
+  // a variation on screen stays numbered while moving inside it
+  if (activeVar && !(path.length >= activeVar.from && path.slice(0, activeVar.from).every((p, i) => sameMove(p, played[i])))) activeVar = null;
+  played = path;
+  toPlay = turnAfter(played);
   replay();
-  setStatus('info', p.color ? `Đã bỏ quân ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`
-                            : `Đã đặt lại quân ở ${pointName(p.r, p.c)}.`);
   saveSoon();
+  const m = node.m;
+  setStatus('info', !m ? `Thế cờ ban đầu · tới lượt ${NAME[toPlay]}.`
+    : m.color ? `Nước ${depthOf(node)}: ${NAME[m.color === 1 ? 'B' : 'W']} ${pointName(m.r, m.c)} · tới lượt ${NAME[toPlay]}.`
+    : `Nước ${depthOf(node)}: nhấc quân ở ${pointName(m.r, m.c)}.`);
+}
+function step(n) {
+  let node = cur;
+  for (let i = 0; i < Math.abs(n); i++) {
+    const next = n < 0 ? node.parent : node.sel;
+    if (!next) break;
+    node = next;
+  }
+  goTo(node);
+}
+$('navFirst').addEventListener('click', () => goTo(tree));
+$('navBack10').addEventListener('click', () => step(-10));
+$('undo').addEventListener('click', () => step(-1));
+$('redo').addEventListener('click', () => step(1));
+$('navFwd10').addEventListener('click', () => step(10));
+$('navLast').addEventListener('click', () => goTo(litLeaf(cur)));
+document.addEventListener('keydown', e => {
+  if ($('tab-scan').hidden || e.target.closest('input, textarea, select') || e.altKey || e.ctrlKey || e.metaKey) return;
+  const act = { ArrowLeft: () => step(e.shiftKey ? -10 : -1), ArrowRight: () => step(e.shiftKey ? 10 : 1),
+                Home: () => goTo(tree), End: () => goTo(litLeaf(cur)) }[e.key];
+  if (act) { e.preventDefault(); act(); }
 });
 
-$('redo').addEventListener('click', () => {
-  if (!redoStack.length) return;
-  const p = redoStack.pop();
-  played.push(p);
-  if (p.color) toPlay = p.color === 1 ? 'W' : 'B';
-  replay();
-  setStatus('info', p.color ? `Đặt lại ${pointName(p.r, p.c)} · tới lượt ${NAME[toPlay]}.`
-                            : `Xoá lại quân ở ${pointName(p.r, p.c)}.`);
-  saveSoon();
+$('cutBranch').addEventListener('click', () => {
+  if (!cur.parent) return;
+  let size = 0;
+  for (const st = [cur]; st.length;) { const x = st.pop(); size++; st.push(...x.kids); }
+  if (size > 1 && !confirm(`Xoá nước này và ${size - 1} nước sau nó trong cây?`)) return;
+  const parent = cur.parent;
+  parent.kids.splice(parent.kids.indexOf(cur), 1);
+  parent.sel = parent.kids[0] || null;
+  goTo(parent);
+  setStatus('ok', `Đã xoá ${size} nước khỏi cây.`);
 });
 
-$('restart').addEventListener('click', () => {
-  if (played.some(p => p.color)) toPlay = startTurn;
-  played = []; redoStack = []; activeVar = null;
-  replay();
-  setStatus('ok', scan.id ? 'Đã về thế cờ như ảnh chụp.' : 'Đã về bàn trống.');
-  saveSoon();
+// The tree as an SVG: depth left to right (move number), a branch drops to the next free row below
+function renderTree() {
+  const S = 26, P = 15;
+  const rowAt = [], items = [];
+  let maxD = 0, maxR = 0;
+  for (const st = [[tree, 0, 0]]; st.length;) {
+    const [node, d, minRow] = st.pop();
+    const row = Math.max(minRow, rowAt[d] ?? 0);
+    rowAt[d] = row + 1;
+    node._x = P + d * S; node._y = P + row * S;
+    maxD = Math.max(maxD, d); maxR = Math.max(maxR, row);
+    items.push(node);
+    for (let i = node.kids.length - 1; i >= 0; i--) st.push([node.kids[i], d + 1, row]);
+  }
+  const lit = new Set();
+  for (let x = cur; x; x = x.parent) lit.add(x);
+  for (let x = cur.sel; x; x = x.sel) lit.add(x);
+  let lines = '', dots = '';
+  items.forEach((node, i) => {
+    const on = lit.has(node);
+    if (node.parent) {
+      const p = node.parent, a = on && lit.has(p);
+      lines += `<path d="M${p._x} ${p._y}${node._y !== p._y ? `L${node._x - S / 2} ${node._y}` : ''}L${node._x} ${node._y}" fill="none" stroke="${a ? 'var(--accent)' : '#c9bda9'}" stroke-width="${a ? 2.5 : 1.5}"/>`;
+    }
+    const m = node.m, d = Math.round((node._x - P) / S);
+    let g = `<rect x="${node._x - S / 2}" y="${node._y - S / 2}" width="${S}" height="${S}" fill="transparent"/>`;
+    if (!m) g += `<rect x="${node._x - 7}" y="${node._y - 7}" width="14" height="14" rx="3" fill="var(--wood)" stroke="var(--wood-line)"/>`;
+    else if (!m.color) g += `<circle cx="${node._x}" cy="${node._y}" r="8.5" fill="#fff" stroke="var(--err)" stroke-dasharray="3 2"/><text x="${node._x}" y="${node._y + 3.5}" font-size="10" text-anchor="middle" fill="var(--err)">×</text>`;
+    else {
+      g += `<circle cx="${node._x}" cy="${node._y}" r="9" fill="${m.color === 1 ? '#141414' : '#fafafa'}" stroke="#333" stroke-width=".8"/>`;
+      g += `<text x="${node._x}" y="${node._y + 3}" font-size="${d > 99 ? 7 : 8.5}" font-weight="700" text-anchor="middle" fill="${m.color === 1 ? '#fff' : '#141414'}">${d}</text>`;
+    }
+    if (node === cur) g += `<circle cx="${node._x}" cy="${node._y}" r="12.5" fill="none" stroke="var(--accent)" stroke-width="2.5"/>`;
+    const tip = !m ? 'Thế cờ ban đầu' : m.color ? `${d}. ${NAME[m.color === 1 ? 'B' : 'W']} ${pointName(m.r, m.c)}` : `${d}. nhấc quân ${pointName(m.r, m.c)}`;
+    dots += `<g data-t="${i}"${on ? '' : ' opacity=".45"'}><title>${tip}</title>${g}</g>`;
+  });
+  treeItems = items;
+  const svg = $('tree'), w = 2 * P + maxD * S, h = 2 * P + maxR * S;
+  const html = lines + dots;
+  if (svg.innerHTML !== html || svg.getAttribute('width') != w || svg.getAttribute('height') != h) {
+    svg.setAttribute('width', w); svg.setAttribute('height', h); svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.innerHTML = html;
+  }
+  const box = $('treeBox');   // keep the current move in view
+  if (cur._x < box.scrollLeft + 20 || cur._x > box.scrollLeft + box.clientWidth - 20) box.scrollLeft = cur._x - box.clientWidth / 2;
+  if (cur._y < box.scrollTop + 14 || cur._y > box.scrollTop + box.clientHeight - 14) box.scrollTop = cur._y - box.clientHeight / 2;
+  const leaves = items.filter(x => !x.kids.length && x.parent).length;
+  $('treeInfo').textContent = `· nước ${depthOf(cur)}/${depthOf(litLeaf(cur))}${leaves > 1 ? ` · ${leaves} nhánh` : ''}`;
+}
+$('tree').addEventListener('click', e => {
+  const g = e.target.closest('[data-t]');
+  if (g) goTo(treeItems[+g.dataset.t]);
 });
+
+// Stored as a flat list in DFS order: parent index, the move, the index of the child on the highlighted line
+function treeJSON() {
+  const nodes = [], objs = [];
+  for (const st = tree.kids.map(k => [k, -1]).reverse(); st.length;) {
+    const [node, p] = st.pop();
+    node._i = nodes.length;
+    objs.push(node);
+    nodes.push({ p, ...node.m, s: -1 });
+    for (let i = node.kids.length - 1; i >= 0; i--) st.push([node.kids[i], node._i]);
+  }
+  objs.forEach((node, i) => { if (node.sel) nodes[i].s = node.sel._i; });
+  return { s: tree.sel ? tree.sel._i : -1, nodes };
+}
+function treeFrom(t) {
+  const root = newNode(null, null), objs = [];
+  for (const x of t.nodes) {
+    const parent = x.p < 0 ? root : objs[x.p];
+    const node = newNode(x.color ? { r: x.r, c: x.c, color: x.color } : { r: x.r, c: x.c, color: 0, was: x.was }, parent);
+    parent.kids.push(node);
+    objs.push(node);
+  }
+  t.nodes.forEach((x, i) => { if (x.s >= 0) objs[i].sel = objs[x.s]; });
+  if (t.s >= 0) root.sel = objs[t.s];
+  return root;
+}
 
 function clearSugg() {
   sugg = null;
@@ -712,7 +895,7 @@ $('analyze').addEventListener('click', async () => {
 });
 
 // ---- sessions: every review is saved for its user; the 10 most recent are listed, starred ones are kept ----
-const boardState = () => ({ played, to_play: toPlay, start_turn: startTurn, matrix });
+const boardState = () => ({ played, tree: treeJSON(), to_play: toPlay, start_turn: startTurn, matrix });
 let creating = null, saveTimer = null;
 
 // The session of the board on screen, created on first use
@@ -813,6 +996,8 @@ async function openSession(id) {
   game = s.game || null;
   played = s.played; toPlay = s.to_play; startTurn = s.start_turn;
   variations = s.variations || [];
+  tree = s.tree ? treeFrom(s.tree) : newNode(null, null);
+  if (!s.tree && game) lightLine(gameStones(game.moves));   // older SGF sessions: the game is the main line
   replay();
   showReview(s.review);
   showSession();
@@ -875,13 +1060,14 @@ function gameStones(moves) {
     .map(([who, mv]) => { const [r, c] = pointRC(mv); return { r, c, color: who === 'B' ? 1 : 2 }; });
 }
 
-// Show the game record after k moves; the rest of the game stays on ↷ Tiến
+// Show the game record after k moves; the game line is lit in the tree, so ▶ / ⏭ go on with it
 function gotoGameMove(k) {
   if (!game) return;
   k = Math.max(0, Math.min(k, game.moves.length));
   activeVar = null;
-  played = gameStones(game.moves.slice(0, k));
-  redoStack = gameStones(game.moves.slice(k)).reverse();
+  const line = gameStones(game.moves);
+  lightLine(line);
+  played = line.slice(0, gameStones(game.moves.slice(0, k)).length);
   startTurn = game.moves[0][0];
   toPlay = k < game.moves.length ? game.moves[k][0] : (game.moves[k - 1][0] === 'B' ? 'W' : 'B');
   replay();
@@ -956,7 +1142,7 @@ $('mistakes').addEventListener('click', e => {
     const moves = []; let who = m.color;
     for (const mv of m.line) { if (mv !== 'pass') moves.push({ color: who, point: mv }); who = who === 'B' ? 'W' : 'B'; }
     const res = applyActions([{ type: 'play', moves }]);
-    setStatus(res.error ? 'err' : 'ok', res.error ? esc(res.error) : `Đã đi thử biến tốt nhất thay cho nước ${m.number} · ↶ Lùi để xem từng nước.`);
+    setStatus(res.error ? 'err' : 'ok', res.error ? esc(res.error) : `Đã đi thử biến tốt nhất thay cho nước ${m.number} · ◀ để xem từng nước; biến này thành một nhánh trong cây.`);
     return;
   }
   if (act === 'played') {
@@ -1089,9 +1275,15 @@ $('nextPage').onclick = () => viewing && openPage(viewing.src, viewing.page + 1)
 // Answer text + book sources into the message `el`
 function renderAnswer(el, j, board) {
   el.innerHTML = md(j.answer, j.sources.length);
+  el._answer = j.answer;
   // board answers mostly rest on KataGo: list only the books the answer actually cites
   const cited = new Set([...el.querySelectorAll('[data-cite]')].map(a => +a.dataset.cite));
   const shown = board ? j.sources.filter(s => cited.has(s.n)) : j.sources;
+  if (canSpeak()) {
+    const say = document.createElement('button');
+    say.type = 'button'; say.className = 'say'; say.textContent = '🔊 Nghe câu trả lời';
+    el.appendChild(say);
+  }
   if (!shown.length) return;
   const box = document.createElement('div');
   box.className = 'srcs';
@@ -1129,7 +1321,8 @@ async function chatRequest(q, { log, btn, body = {}, waitText = 'Đang tra sách
 }
 
 // ---- coach: chat about the position on screen (KataGo numbers + books) ----
-async function askCoach(q) {
+// voice: asked by voice, so the answer is read aloud too
+async function askCoach(q, { voice = false } = {}) {
   q = q.trim();
   if (!q || !matrix) return;
   $('coachQ').value = '';
@@ -1150,6 +1343,7 @@ async function askCoach(q) {
   const j = await chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body: { board, played, session_id: s?.id },
                                    waitText: 'KataGo đang phân tích các biến, rồi giải thích…' });
   if (!j) return;
+  if (voice || $('speakToggle').checked) speak(j.answer);
   if (j.variations?.length) { variations = variations.concat(j.variations); renderVars(); }
   const unchanged = JSON.stringify(matrix) + toPlay === snapshot;
   if (unchanged && j.marks) {
@@ -1177,8 +1371,8 @@ function pointRC(p) {
 }
 
 function restoreState(st) {
-  ({ played, toPlay, startTurn, redoStack } = st);
-  played = played.slice(); redoStack = redoStack.slice();
+  ({ played, toPlay, startTurn } = st);
+  played = played.slice();
   replay();
   saveSoon();
 }
@@ -1186,7 +1380,7 @@ function restoreState(st) {
 // Apply all the edits or none: a move that is illegal here takes back the ones before it
 function applyActions(actions) {
   activeVar = null;
-  const before = { played: played.slice(), toPlay, startTurn, redoStack: redoStack.slice() };
+  const before = { played: played.slice(), toPlay, startTurn };
   const fail = msg => { restoreState(before); return { error: msg }; };
   for (const a of actions) {
     if (a.type === 'play') {
@@ -1213,7 +1407,6 @@ function applyActions(actions) {
       replay();
     }
   }
-  redoStack = [];
   clearSugg();
   render();
   saveSoon();
@@ -1271,9 +1464,8 @@ function renderVars() {
 function showVariation(name) {
   const v = variations.find(x => x.name === name);
   if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return; }
-  const before = activeVar?.before || { played: played.slice(), toPlay, startTurn, redoStack: redoStack.slice() };
+  const before = activeVar?.before || { played: played.slice(), toPlay, startTurn };
   played = v.start.map(p => ({ ...p }));
-  redoStack = [];
   replay();
   for (const mv of v.moves) {
     const rc = pointRC(mv.point);
@@ -1289,7 +1481,7 @@ function showVariation(name) {
   clearSugg();
   render();
   saveSoon();
-  setStatus('ok', `${esc(name)}${v.title ? ' · ' + esc(v.title) : ''}: ${v.moves.length > 1 ? `số 1–${v.moves.length}` : 'số 1'} trên bàn · ↶ Lùi để xem từng nước · tới lượt ${NAME[toPlay]}.`);
+  setStatus('ok', `${esc(name)}${v.title ? ' · ' + esc(v.title) : ''}: ${v.moves.length > 1 ? `số 1–${v.moves.length}` : 'số 1'} trên bàn · ◀ để xem từng nước · tới lượt ${NAME[toPlay]}.`);
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 $('varList').addEventListener('click', e => {
@@ -1326,6 +1518,179 @@ $('coachSuggest').addEventListener('click', e => {
   askCoach(e.target.textContent);
 });
 
+// ---- voice: ask by speaking, hear the answers (Vietnamese) ----
+// Speech recognition in the browser when it has one (Chrome, Safari); otherwise the recording goes to /api/stt.
+// Answers are read by the browser's own Vietnamese voice.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const canRecord = () => !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+const canSpeak = () => 'speechSynthesis' in window;
+let listening = null;   // {stop()} while the microphone is on
+let useServerStt = !SR;
+
+function micState(on, hint) {
+  $('micBtn').classList.toggle('on', on);
+  $('micBtn').textContent = on ? '⏺' : '🎤';
+  $('coachQ').placeholder = hint || 'Ví dụ: Nước Q16 có tốt không?';
+}
+
+function listenBrowser() {
+  const rec = new SR();
+  rec.lang = 'vi-VN'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+  let text = '', failed = false;
+  rec.onresult = e => {
+    text = [...e.results].map(r => r[0].transcript).join(' ').trim();
+    $('coachQ').value = text;
+  };
+  rec.onerror = e => {
+    failed = true;
+    if (['network', 'service-not-allowed', 'language-not-supported'].includes(e.error) && canRecord()) {
+      useServerStt = true;   // this browser has the API but no working service: record instead from now on
+      listening = null; micState(false);
+      listenServer();
+      return;
+    }
+    setStatus('err', e.error === 'not-allowed' ? 'Chưa được phép dùng micro: cho phép micro cho trang này rồi thử lại.'
+      : e.error === 'no-speech' ? 'Không nghe thấy gì, bấm 🎤 và nói lại nhé.' : 'Lỗi nhận giọng nói: ' + esc(e.error));
+  };
+  rec.onend = () => {
+    if (listening?.rec !== rec) return;
+    listening = null; micState(false);
+    if (text && !failed) askCoach(text, { voice: true });
+  };
+  rec.start();
+  listening = { rec, stop: () => rec.stop() };
+  micState(true, 'Đang nghe… nói câu hỏi của bạn');
+}
+
+async function listenServer() {
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { setStatus('err', 'Chưa được phép dùng micro: cho phép micro cho trang này rồi thử lại.'); return; }
+  const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm']
+    .find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  // stop by itself after 1.5 s of silence once speech was heard, or after 30 s
+  let ctx = null, timer = null;
+  try {
+    ctx = new AudioContext();
+    const an = ctx.createAnalyser(), buf = new Float32Array(1024);
+    ctx.createMediaStreamSource(stream).connect(an);
+    let heard = false, quietSince = Date.now();
+    timer = setInterval(() => {
+      an.getFloatTimeDomainData(buf);
+      const rms = Math.sqrt(buf.reduce((a, x) => a + x * x, 0) / buf.length);
+      if (rms > 0.02) { heard = true; quietSince = Date.now(); }
+      else if (heard && Date.now() - quietSince > 1500) stop();
+    }, 100);
+  } catch (e) { /* no silence detection: tap again to stop */ }
+  const cap = setTimeout(() => stop(), 30000);
+  function stop() {
+    clearInterval(timer); clearTimeout(cap);
+    if (rec.state !== 'inactive') rec.stop();
+  }
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    ctx?.close();
+    listening = null;
+    micState(false, 'Đang chuyển giọng nói thành chữ…');
+    $('micBtn').disabled = true;
+    try {
+      const fd = new FormData();
+      const type = (rec.mimeType || mime || 'audio/webm').split(';')[0];
+      fd.append('file', new Blob(chunks, { type }), 'voice');
+      const r = await fetch('api/stt', { method: 'POST', headers: { 'X-Client-Id': clientId }, body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      if (!j.text) throw new Error('Không nghe rõ, bấm 🎤 và nói lại nhé.');
+      $('coachQ').value = j.text;
+      askCoach(j.text, { voice: true });
+    } catch (err) {
+      setStatus('err', esc(err.message));
+    } finally {
+      $('micBtn').disabled = false;
+      micState(false);
+    }
+  };
+  rec.start();
+  listening = { stop };
+  micState(true, 'Đang nghe… nói xong sẽ tự gửi');
+}
+
+$('micBtn').hidden = !SR && !canRecord();
+$('micBtn').addEventListener('click', () => {
+  if (listening) { listening.stop(); return; }
+  stopSpeaking();
+  unlockSpeech();
+  if (useServerStt) listenServer(); else listenBrowser();
+});
+
+// Text to speech: plain sentences, in chunks (long utterances get cut off in Chrome)
+function speakable(text) {
+  return text
+    .replace(/\[Var(\d+)\]/g, 'biến $1')
+    .replace(/\[\d+(?:\s*,\s*\d+)*\]/g, '')
+    .replace(/[*_#`>]/g, '')
+    .replace(/⚫/g, 'Đen ').replace(/⚪/g, 'Trắng ')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/^\s*[-•]\s+/gm, '')
+    .replace(/\s*\n+\s*/g, '. ')
+    .replace(/\.\s*\./g, '.')
+    .trim();
+}
+let viVoice = null;
+function pickVoice() {
+  const vs = speechSynthesis.getVoices().filter(v => /^vi/i.test(v.lang));
+  viVoice = vs.find(v => /natural|online|google/i.test(v.name)) || vs[0] || null;
+}
+if (canSpeak()) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice); }
+let unlocked = false;
+function unlockSpeech() {   // iOS only speaks after a first utterance started by a tap
+  if (unlocked || !canSpeak()) return;
+  unlocked = true;
+  speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+}
+function speak(text) {
+  if (!canSpeak()) return;
+  stopSpeaking();
+  const all = speakable(text);
+  if (!all) return;
+  if (!viVoice && speechSynthesis.getVoices().length) {
+    setStatus('info', 'Máy chưa có giọng đọc tiếng Việt: cài <b>Google Text-to-Speech</b> (Android) hoặc thêm giọng Tiếng Việt trong Cài đặt › Trợ năng › Nội dung được đọc (iPhone).');
+  }
+  const parts = all.match(/[^.!?;:]+[.!?;:]*\s*/g) || [all];
+  const chunks = [];
+  for (const p of parts) {
+    if (chunks.length && (chunks[chunks.length - 1] + p).length < 180) chunks[chunks.length - 1] += p;
+    else chunks.push(p);
+  }
+  chunks.forEach((c, i) => {
+    const u = new SpeechSynthesisUtterance(c.trim());
+    u.lang = 'vi-VN'; u.rate = 1.05;
+    if (viVoice) u.voice = viVoice;
+    if (i === chunks.length - 1) u.onend = u.onerror = () => { $('speakStop').hidden = true; };
+    speechSynthesis.speak(u);
+  });
+  $('speakStop').hidden = false;
+}
+function stopSpeaking() {
+  if (canSpeak()) speechSynthesis.cancel();
+  $('speakStop').hidden = true;
+}
+$('speakStop').addEventListener('click', stopSpeaking);
+$('speakToggle').parentElement.hidden = !canSpeak();
+try { $('speakToggle').checked = localStorage.getItem('goscan-speak') === '1'; } catch (e) {}
+$('speakToggle').addEventListener('change', () => {
+  unlockSpeech();
+  if (!$('speakToggle').checked) stopSpeaking();
+  try { localStorage.setItem('goscan-speak', $('speakToggle').checked ? '1' : '0'); } catch (e) {}
+});
+$('coachLog').addEventListener('click', e => {
+  const b = e.target.closest('.say');
+  if (b) speak(b.closest('.msg')._answer || '');
+});
+
 // ---- reviews of the app: public, optionally anonymous; admins read them through the Telegram bot ----
 let rating = 0, me = null;
 const showStars = v => { for (const b of $('stars').children) b.classList.toggle('on', +b.dataset.v <= v); };
@@ -1337,6 +1702,7 @@ $('stars').addEventListener('mouseover', e => { const v = +e.target.closest('but
 $('stars').addEventListener('mouseleave', () => showStars(rating));
 
 const starText = n => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
+let reviewItems = [];
 async function loadReviews() {
   try {
     const j = await apiJson('api/feedback');
@@ -1349,7 +1715,11 @@ async function loadReviews() {
         ${r.text ? `<div class="tx">${esc(r.text)}</div>` : ''}
         ${r.images ? `<div class="rimgs">${Array.from({ length: r.images }, (_, k) =>
           `<button type="button" class="ri" data-img="api/feedback/${r.id}/images/${k}"><img src="api/feedback/${r.id}/images/${k}" loading="lazy" alt="Ảnh góp ý ${k + 1}"></button>`).join('')}</div>` : ''}
+        ${r.reply ? `<div class="reply"><b>💬 Go Scan trả lời</b> <span class="muted">${when(r.reply.at)}</span><div class="tx">${esc(r.reply.text)}</div></div>` : ''}
+        ${me?.admin ? `<div class="racts"><button type="button" class="src" data-act="edit">${r.reply ? '✎ Sửa trả lời' : '↩ Trả lời'}</button></div>` : ''}
       </li>`).join('') || '<li class="muted">Chưa có góp ý nào, hãy là người đầu tiên!</li>';
+    reviewItems = j.reviews;
+    return j;
   } catch (e) {
     $('reviewList').innerHTML = `<li style="color:var(--err)">${esc(e.message)}</li>`;
   }
@@ -1373,6 +1743,13 @@ $('reviewForm').addEventListener('submit', async e => {
     reviewImgs.forEach(im => URL.revokeObjectURL(im.url)); reviewImgs = []; showReviewImgs();
     setReviewNote('ok', 'Cảm ơn bạn đã góp ý!');
     loadReviews();
+    (async () => {   // the auto reply comes a few seconds later
+      for (const wait of [4000, 8000, 15000]) {
+        await new Promise(res => setTimeout(res, wait));
+        const l = await loadReviews();
+        if (!l || l.reviews.find(x => x.id === j.id)?.reply) break;
+      }
+    })();
   } catch (err) {
     setReviewNote('err', esc(err.message));
   } finally {
@@ -1405,6 +1782,42 @@ $('reviewImgs').addEventListener('click', e => {
   reviewImgs.splice(+k, 1);
   showReviewImgs();
 });
+// Admins: write, AI-draft, publish or remove the public reply of a review
+async function replyAction(li, act) {
+  const id = li.dataset.id, r = reviewItems.find(x => x.id === id);
+  const box = li.querySelector('.racts');
+  if (act === 'edit') {
+    box.outerHTML = `<div class="redit"><textarea rows="4" maxlength="1000" placeholder="Câu trả lời công khai của Go Scan…">${esc(r.reply?.text || '')}</textarea>
+      <div class="racts"><button type="button" class="src" data-act="draft">✨ AI viết nháp</button>
+      <button type="button" class="src" data-act="save">Đăng</button>
+      ${r.reply ? '<button type="button" class="src" data-act="remove">Gỡ trả lời</button>' : ''}
+      <button type="button" class="src" data-act="cancel">Huỷ</button></div></div>`;
+    li.querySelector('.redit textarea').focus();
+    return;
+  }
+  if (act === 'cancel') { loadReviews(); return; }
+  const ta = li.querySelector('.redit textarea');
+  const btns = li.querySelectorAll('.redit button');
+  btns.forEach(b => { b.disabled = true; });
+  try {
+    if (act === 'draft') {
+      ta.value = '…';
+      ta.value = (await apiJson(`api/feedback/${id}/reply/draft`, { method: 'POST' })).text;
+    } else if (act === 'save') {
+      if (!ta.value.trim()) throw new Error('Câu trả lời đang trống');
+      await apiJson(`api/feedback/${id}/reply`, { method: 'POST', body: { text: ta.value } });
+      loadReviews();
+    } else if (act === 'remove') {
+      if (!confirm('Gỡ câu trả lời này?')) return;
+      await apiJson(`api/feedback/${id}/reply`, { method: 'DELETE' });
+      loadReviews();
+    }
+  } catch (err) {
+    setReviewNote('err', esc(err.message));
+  } finally {
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
 function setReviewNote(kind, html) {
   $('reviewForm').querySelector('.applied')?.remove();
   note($('reviewForm'), html, kind === 'err' ? 'err' : '');
@@ -1412,6 +1825,8 @@ function setReviewNote(kind, html) {
 $('reviewList').addEventListener('click', async e => {
   const img = e.target.closest('[data-img]');
   if (img) { openImage(img.dataset.img, 'Ảnh góp ý'); return; }
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act) { replyAction(e.target.closest('li[data-id]'), act); return; }
   const li = e.target.closest('[data-del]')?.closest('li');
   if (!li || !confirm('Xoá góp ý này?')) return;
   try { await apiJson(`api/feedback/${li.dataset.id}`, { method: 'DELETE' }); loadReviews(); }

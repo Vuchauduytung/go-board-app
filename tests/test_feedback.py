@@ -93,3 +93,42 @@ def test_photos_lose_metadata_and_go_with_the_review():
     assert feedback.image_path(r['id'], 5) is None and feedback.image_path('../x', 0) is None
     feedback.delete(r['id'])
     assert not any(f.exists() for f in files)
+
+
+def test_auto_reply_and_admin_reply(monkeypatch):
+    from rag import llm
+    asked = []
+
+    def fake(chain, system, messages, max_tokens, **kw):
+        asked.append(messages[0]['content'])
+        return llm.Reply('"Cảm ơn bạn, chúng mình xin lỗi vì lỗi nhận dạng."', 10, 'x:y')
+    monkeypatch.setattr(llm, 'generate', fake)
+    r = feedback.add('an@gmail.com', 1, 'Nhận dạng sai hoài', anonymous=True)
+    r = feedback.auto_reply(r)
+    assert r['reply']['by'] == 'auto' and r['reply']['text'] == 'Cảm ơn bạn, chúng mình xin lỗi vì lỗi nhận dạng.'
+    assert '<gop_y>\nNhận dạng sai hoài\n</gop_y>' in asked[0] and 'an@gmail.com' not in asked[0]
+    pub = feedback.list_public(None)['reviews'][0]
+    assert pub['reply']['text'].startswith('Cảm ơn') and 'by' not in pub['reply']
+    assert '↳ Go Scan trả lời (tự động)' in telegram_bot.describe(r)
+    assert feedback.auto_reply(r) is r and len(asked) == 1   # already replied: left alone
+
+    # stars only: the template, no LLM; the LLM failing also falls back to it
+    s = feedback.auto_reply(feedback.add('b@x.com', 5, '', False))
+    assert 'rất vui' in s['reply']['text'] and len(asked) == 1
+    monkeypatch.setattr(llm, 'generate', lambda *a, **k: (_ for _ in ()).throw(llm.Unavailable('down')))
+    t = feedback.auto_reply(feedback.add('c@x.com', 2, 'Chậm quá', False))
+    assert 'xin lỗi' in t['reply']['text']
+
+    # switched off by the admins; settings.json is not a review
+    assert 'TẮT' in telegram_bot.handle(1, '/autoreply off')
+    u = feedback.auto_reply(feedback.add('d@x.com', 4, 'Hay', False))
+    assert not u.get('reply') and len(feedback.all_reviews()) == 4
+    assert 'BẬT' in telegram_bot.handle(1, '/autoreply on')
+
+    # manual reply / removal from the bot, multi-line text kept
+    assert 'Đã đăng' in telegram_bot.handle(1, f'/reply {u["id"][:8]}\nCảm ơn!\nDòng hai')
+    assert feedback.get(u['id'])['reply'] == {**feedback.get(u['id'])['reply'], 'text': 'Cảm ơn!\nDòng hai', 'by': 'admin 1'}
+    assert 'Thiếu nội dung' in telegram_bot.handle(1, f'/reply {u["id"][:8]}')
+    assert 'Đã gỡ' in telegram_bot.handle(1, f'/unreply {u["id"][:8]}')
+    assert feedback.list_public(None)['reviews'][0]['reply'] is None
+    assert 'chưa đăng' in telegram_bot.handle(1, f'/draft {t["id"][:8]}')

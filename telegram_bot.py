@@ -1,6 +1,6 @@
 # Admin channel: a Telegram bot that only answers the admins' chats. It lists and moderates the app's reviews
-# (feedback.py), summarises them with the LLM chain and answers free-text questions about them; the app also
-# pings the admins when a review comes in.
+# (feedback.py), replies to them publicly, summarises them with the LLM chain and answers free-text questions
+# about them; the app also pings the admins when a review comes in, with the auto reply it got.
 #
 # Telegram calls POST /telegram/webhook, which IAP would block: on Cloud Run this module runs as its own public
 # service (go-scan-bot, `uvicorn telegram_bot:app`) on the same data bucket; on the Oracle VM the app serves the
@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -43,6 +44,10 @@ HELP = """Lệnh cho admin Go Scan:
 /photos <id> – xem ảnh đính kèm của một góp ý
 /hide <id> · /show <id> – ẩn / hiện một góp ý trên trang public
 /delete <id> – xoá hẳn một góp ý
+/draft <id> – AI viết nháp câu trả lời (chưa đăng)
+/reply <id> <nội dung> – đăng / thay câu trả lời công khai
+/unreply <id> – gỡ câu trả lời
+/autoreply [on|off] – bật / tắt tự trả lời góp ý mới
 Hoặc nhắn câu hỏi bất kỳ, ví dụ "người dùng phàn nàn gì nhiều nhất?"."""
 
 SUMMARY_PROMPT = """Bạn là trợ lý phân tích góp ý người dùng cho Go Scan, ứng dụng nhận dạng bàn cờ vây từ ảnh, \
@@ -110,20 +115,35 @@ def describe(r, full=True):
     flags = ' [ĐÃ ẨN]' if r.get('hidden') else ''
     flags += f' · 📷 {r["images"]} ảnh (/photos {r["id"][:8]})' if r.get('images') else ''
     text = r['text'] if full or len(r['text']) <= 300 else r['text'][:300] + '…'
-    return f'#{r["id"][:8]} · {_stars(r["rating"])} · {_when(r["created_at"])}{flags}\n{who}\n{text}'
+    out = f'#{r["id"][:8]} · {_stars(r["rating"])} · {_when(r["created_at"])}{flags}\n{who}\n{text}'
+    if r.get('reply'):
+        by = 'tự động' if r['reply']['by'] == 'auto' else r['reply']['by']
+        out += f'\n↳ Go Scan trả lời ({by}): {r["reply"]["text"]}'
+    return out
+
+
+def on_new_review(r):
+    """Off the request thread: the auto reply (when on), then the admins hear about the review and that reply."""
+    def run():
+        try:
+            reviewed = feedback.auto_reply(r)
+        except Exception as ex:
+            log.warning('auto reply to %s failed: %s', r['id'], ex)
+            reviewed = r
+        notify(reviewed)
+    threading.Thread(target=run, daemon=True).start()
 
 
 def notify(r):
-    """Tell the admins about a new review, off the request thread."""
+    """Tell the admins about a new review."""
     if not configured():
         return
     text = 'Góp ý mới:\n\n' + describe(r)
-
-    def run():
-        for c in ADMIN_IDS:
-            send(c, text)
-            send_photos(c, r)
-    threading.Thread(target=run, daemon=True).start()
+    if r.get('reply', None) is None:
+        text += f'\n\nChưa trả lời: /draft {r["id"][:8]} để AI viết nháp, /reply {r["id"][:8]} <nội dung> để đăng.'
+    for c in ADMIN_IDS:
+        send(c, text)
+        send_photos(c, r)
 
 
 def _days(arg, default):
@@ -195,6 +215,22 @@ def handle(chat_id, text):
             return f'Đã xoá góp ý #{r["id"][:8]}.'
         feedback.set_hidden(r['id'], cmd == '/hide')
         return f'Đã {"ẩn" if cmd == "/hide" else "hiện lại"} góp ý #{r["id"][:8]} trên trang public.'
+    if cmd == '/autoreply':
+        if arg.lower() in ('on', 'off'):
+            feedback.set_auto_reply(arg.lower() == 'on')
+        return f'Tự trả lời góp ý mới: {"BẬT" if feedback.auto_reply_enabled() else "TẮT"} (/autoreply on|off).'
+    if cmd in ('/draft', '/reply', '/unreply'):
+        rid, body = (re.split(r'\s+', arg, maxsplit=1) + [''])[:2] if arg else ('', '')
+        r = feedback.find(rid)
+        if not r:
+            return f'Không tìm thấy góp ý (gõ ít nhất 4 ký tự đầu của mã #, ví dụ {cmd} 3fa2c1d0).'
+        if cmd == '/draft':
+            return (f'Nháp trả lời #{r["id"][:8]} (chưa đăng):\n\n{feedback.draft_reply(r)}\n\n'
+                    f'Sửa nếu cần rồi gửi: /reply {r["id"][:8]} <nội dung>')
+        if cmd == '/reply' and not body.strip():
+            return f'Thiếu nội dung: /reply {r["id"][:8]} <nội dung>. Cần nháp thì gõ /draft {r["id"][:8]}.'
+        feedback.set_reply(r['id'], body if cmd == '/reply' else '', f'admin {chat_id}')
+        return f'Đã {"đăng câu trả lời cho" if cmd == "/reply" else "gỡ câu trả lời của"} góp ý #{r["id"][:8]}.'
     if cmd.startswith('/'):
         return 'Không có lệnh này.\n\n' + HELP
     items = feedback.all_reviews()
@@ -246,6 +282,7 @@ def set_webhook(url):
         {'command': 'reviews', 'description': 'Góp ý mới nhất'},
         {'command': 'stats', 'description': 'Thống kê góp ý'},
         {'command': 'summary', 'description': 'AI tổng hợp góp ý'},
+        {'command': 'autoreply', 'description': 'Bật / tắt tự trả lời góp ý'},
         {'command': 'help', 'description': 'Các lệnh'},
     ]}))
 

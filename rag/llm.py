@@ -135,3 +135,58 @@ def generate(chain_name, system, messages, max_tokens, schema=None, temperature=
             return Reply(text, tokens, f'{provider}:{model}')
         errors.append(f'{provider}:{model}: empty answer')
     raise Unavailable('Không có mô hình AI nào trả lời được lúc này (' + ('; '.join(errors) or 'chưa có API key') + ')')
+
+
+# Speech to text for the voice questions, when the browser cannot transcribe them itself
+STT_CHAIN = 'groq:whisper-large-v3-turbo,gemini:gemini-3.5-flash-lite'
+STT_PROMPT = 'Hỏi đáp về cờ vây: nước đi, tọa độ như Q16, D4, K10, quân đen, quân trắng, biến, KataGo.'
+
+
+def transcribe(audio, mime, language='vi'):
+    """Text of a short recording (webm / ogg / mp4 / wav). -> str; raises Unavailable when every provider failed."""
+    errors = []
+    for item in os.environ.get('LLM_CHAIN_STT', STT_CHAIN).split(','):
+        provider, _, model = item.strip().partition(':')
+        if provider not in KEYS or not model or not os.environ.get(KEYS[provider]):
+            continue
+        try:
+            text = (_transcribe_gemini(model, audio, mime, language) if provider == 'gemini'
+                    else _transcribe_openai(provider, model, audio, mime, language))
+        except Exception as ex:
+            log.warning('%s:%s transcription failed, trying the next model: %s', provider, model, str(ex)[:300])
+            errors.append(f'{provider}:{model}: {str(ex)[:120]}')
+            continue
+        if text:
+            return text
+        errors.append(f'{provider}:{model}: empty transcript')
+    raise Unavailable('Không chuyển được giọng nói thành chữ lúc này (' + ('; '.join(errors) or 'chưa có API key') + ')')
+
+
+def _transcribe_openai(provider, model, audio, mime, language):
+    """OpenAI-style /audio/transcriptions (Groq Whisper), multipart upload."""
+    url = OPENAI_COMPATIBLE[provider][0].replace('/chat/completions', '/audio/transcriptions')
+    ext = {'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/wav': 'wav'}
+    b = os.urandom(12).hex()
+    fields = {'model': model, 'language': language, 'response_format': 'json', 'prompt': STT_PROMPT}
+    body = b''.join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields.items())
+    body += (f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="voice.{ext.get(mime, "webm")}"\r\n'
+             f'Content-Type: {mime}\r\n\r\n').encode() + audio + f'\r\n--{b}--\r\n'.encode()
+    req = urllib.request.Request(url, body, {'Content-Type': f'multipart/form-data; boundary={b}', 'User-Agent': 'go-scan/1.0',
+                                             'Authorization': 'Bearer ' + os.environ[KEYS[provider]]})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return (json.loads(r.read()).get('text') or '').strip()
+    except urllib.error.HTTPError as ex:
+        raise RuntimeError(f'HTTP {ex.code}: {ex.read()[:300].decode(errors="replace")}') from None
+
+
+def _transcribe_gemini(model, audio, mime, language):
+    from google.genai import types
+    resp = _gemini().models.generate_content(
+        model=model,
+        contents=[types.Part.from_bytes(data=audio, mime_type=mime),
+                  'Chép lại nguyên văn câu nói tiếng Việt trong đoạn ghi âm (chủ đề: ' + STT_PROMPT + '). '
+                  'Chỉ trả về đúng câu nói, không thêm gì khác; im lặng thì trả về chuỗi rỗng.'],
+        config=types.GenerateContentConfig(max_output_tokens=400,
+                                           thinking_config=types.ThinkingConfig(thinking_level='minimal')))
+    return (resp.text or '').strip()
