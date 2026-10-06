@@ -12,17 +12,21 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   "xoá quân D4", "quay lại nước 5"…), trợ lý trả kèm thao tác và trang web thực hiện lên bàn (có nút hoàn tác).
 - Ván cờ (`sessions.py`): mỗi người dùng giữ 10 ván gần nhất + tối đa 20 ván ghim ⭐ (admin không giới hạn), gồm
   thế cờ, các nước đã đặt và cuộc trò chuyện, trong `SESSIONS_DIR` (mặc định `DATA_DIR/sessions`).
-- Tài khoản (`accounts.py`): tài khoản Google qua IAP; `ADMIN_EMAILS` không bị giới hạn, người dùng thường có hạn mức
+- Tài khoản (`accounts.py`): tài khoản Google qua oauth2-proxy (VM Oracle); `ADMIN_EMAILS` không bị giới hạn, người dùng thường có hạn mức
   mỗi ngày `USER_DAILY_GEMINI_TOKENS` (200.000 token) và `USER_DAILY_KATAGO` (300 lượt KataGo không lấy từ cache).
 - Lưu trữ: mỗi lượt chụp nằm trong `DATA_DIR/<id>/` gồm `image.jpg`, `recognized.json`, `board.json` (sau khi gửi).
-- Triển khai Google Cloud (Cloud Run + IAP): xem [deploy/README.md](deploy/README.md) và [infrastructure.puml](infrastructure.puml).
-- Triển khai Oracle Cloud Always Free (VM ARM 2 OCPU / 12 GB, DuckDNS + Caddy + đăng nhập Google, hoàn toàn miễn phí):
-  xem [deploy/oracle/README.md](deploy/oracle/README.md).
+- Triển khai: một VM Oracle Cloud Always Free (ARM 2 OCPU / 12 GB, DuckDNS + Caddy + đăng nhập Google), kiến trúc ở
+  [deploy/oracle/ARCHITECTURE.md](deploy/oracle/ARCHITECTURE.md), cách dựng ở [deploy/oracle/README.md](deploy/oracle/README.md),
+  vận hành (bot Telegram, thêm sách) ở [deploy/README.md](deploy/README.md). Bản Cloud Run cũ đã gỡ (6/10/2026).
+- Cây nước đi: mọi nhánh đã thử được giữ (lùi rồi đi khác là mở nhánh mới), nhánh đang xem sáng lên, chạm một nước
+  trên cây để nhảy tới; nút ⏮ ◀◀ ◀ ▶ ▶▶ ⏭ (về gốc, ±1, ±10, tới cuối nhánh) như OGS. Lưu cùng ván (`tree`).
+- Hỏi bằng giọng nói, nghe trả lời bằng giọng tiếng Việt (nhận giọng trong trình duyệt, dự phòng `/api/stt`).
+- Góp ý (tab ⭐): AI tự trả lời công khai, admin trả lời tay trên web hoặc qua bot Telegram (`telegram_bot.py`).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
-  tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi, nên chạy được cả trên Cloud Run).
+  tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi).
 - AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → OpenRouter → Mistral), xem
   [deploy/LLM_PROVIDERS.md](deploy/LLM_PROVIDERS.md).
-- KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~21 lượt/s trên Cloud Run CPU):
+- KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~21 lượt/s trên CPU):
   `modal deploy katago/modal_katago.py`, rồi đặt `KATAGO_URL`, `KATAGO_AUTH=modal`, `KATAGO_MODAL_TOKEN` cho app.
 
 ## Chạy
@@ -57,7 +61,10 @@ Mở `http://<IP máy chủ>:8765` trên điện thoại (cùng Wi-Fi).
 | POST | `/api/sessions/{id}/review/step` | làm thêm ~20 s review; gọi lại tới khi `status` = `done` → `mistakes: {B: [...], W: [...]}` |
 | GET | `/api/me` | người dùng, quyền admin và lượt đã dùng hôm nay |
 | GET / POST | `/api/sessions` | danh sách `{recent (10), pinned, pinned_limit}` / tạo ván `{base, scan_id?, played, to_play, start_turn, matrix}` |
-| GET / PUT / DELETE | `/api/sessions/{id}` | mở / lưu `{played, to_play, start_turn, matrix, title}` / xoá ván |
+| GET / PUT / DELETE | `/api/sessions/{id}` | mở / lưu `{played, tree, to_play, start_turn, matrix, title}` / xoá ván; `tree` = `{s, nodes: [{p, r, c, color, was?, s}]}` (cha, nước, con trên nhánh đang sáng) |
 | POST | `/api/sessions/{id}/pin` | `{pinned}`; 409 khi đã đủ số ván ghim |
 | POST | `/api/chat/reset` | xoá lịch sử hội thoại |
 | GET | `/api/books/{id}/pages/{n}` | ảnh trang sách được trích dẫn |
+| POST | `/api/stt` | form `file` (ghi âm ≤ 3 MB) → `{text}` (giọng nói tiếng Việt → chữ) |
+| GET / POST | `/api/feedback` | góp ý công khai (kèm `reply`) / gửi góp ý (form `rating`, `text`, `anonymous`, `images`) |
+| POST / DELETE | `/api/feedback/{id}/reply` | admin: đăng `{text}` / gỡ câu trả lời; `POST …/reply/draft` → nháp do AI viết |

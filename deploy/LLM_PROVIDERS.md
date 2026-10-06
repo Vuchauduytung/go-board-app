@@ -24,11 +24,11 @@ Mistral Experiment, nhiều model `:free` trên OpenRouter). Đừng hỏi thôn
 
 ## Tạo key
 
-| Nhà cung cấp | Cách lấy key | Biến môi trường | Secret trên GCP |
-|---|---|---|---|
-| **Groq** | https://console.groq.com → đăng nhập → **API Keys** → Create API Key | `GROQ_API_KEY` | `go-scan-groq-api-key` |
-| **Mistral** | https://console.mistral.ai → **Admin → Billing / Plans** → kích hoạt gói **Experiment** (miễn phí, cần xác minh số điện thoại) → **API Keys** → Create new key. Key tạo trước khi kích hoạt gói có hạn mức 0 request/phút (lỗi 429). | `MISTRAL_API_KEY` | `go-scan-mistral-api-key` |
-| **OpenRouter** | https://openrouter.ai → **Keys** → Create Key (50 lượt/ngày với model `:free`; nạp 10 USD một lần để có 1.000 lượt/ngày) | `OPENROUTER_API_KEY` | `go-scan-openrouter-api-key` |
+| Nhà cung cấp | Cách lấy key | Biến môi trường |
+|---|---|---|
+| **Groq** | https://console.groq.com → đăng nhập → **API Keys** → Create API Key | `GROQ_API_KEY` |
+| **Mistral** | https://console.mistral.ai → **Admin → Billing / Plans** → kích hoạt gói **Experiment** (miễn phí, cần xác minh số điện thoại) → **API Keys** → Create new key. Key tạo trước khi kích hoạt gói có hạn mức 0 request/phút (lỗi 429). | `MISTRAL_API_KEY` |
+| **OpenRouter** | https://openrouter.ai → **Keys** → Create Key (50 lượt/ngày với model `:free`; nạp 10 USD một lần để có 1.000 lượt/ngày) | `OPENROUTER_API_KEY` |
 
 Không bắt buộc có đủ cả ba; có cái nào thì chuỗi dùng cái đó.
 
@@ -44,18 +44,11 @@ OPENROUTER_API_KEY=sk-or-...
 
 rồi `docker compose up -d`. Trên Oracle: điền vào `deploy/oracle/.env`.
 
-## Dùng trên Cloud Run
+## Giọng nói → chữ
 
-Mỗi key là một secret, chỉ service account của app được đọc; `deploy/gcp.sh` tự gắn secret nào đang có:
-
-```bash
-P=$(gcloud config get-value project)
-read -rsp 'Groq key: ' KEY && printf %s "$KEY" | gcloud secrets create go-scan-groq-api-key --data-file=- && unset KEY
-gcloud secrets add-iam-policy-binding go-scan-groq-api-key \
-  --member="serviceAccount:go-scan-run@$P.iam.gserviceaccount.com" --role=roles/secretmanager.secretAccessor
-# tương tự: go-scan-mistral-api-key, go-scan-openrouter-api-key
-deploy/gcp.sh app
-```
+Câu hỏi bằng giọng nói được trình duyệt tự nhận dạng khi có thể; trình duyệt không hỗ trợ thì gửi đoạn ghi âm lên
+`/api/stt`, chạy chuỗi `LLM_CHAIN_STT` (mặc định `groq:whisper-large-v3-turbo,gemini:gemini-3.5-flash-lite`), dùng
+chung `GROQ_API_KEY` / `GEMINI_API_KEY`.
 
 ## Kiểm tra
 

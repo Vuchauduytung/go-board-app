@@ -2,9 +2,8 @@
 # (feedback.py), replies to them publicly, summarises them with the LLM chain and answers free-text questions
 # about them; the app also pings the admins when a review comes in, with the auto reply it got.
 #
-# Telegram calls POST /telegram/webhook, which IAP would block: on Cloud Run this module runs as its own public
-# service (go-scan-bot, `uvicorn telegram_bot:app`) on the same data bucket; on the Oracle VM the app serves the
-# route itself and Caddy sends that one path past oauth2-proxy. Requests are trusted only with the secret token
+# Telegram calls POST /telegram/webhook, which the sign-in proxy would block: the app serves the route itself and
+# Caddy sends that one path past oauth2-proxy (`telegram_bot:app` can also run alone as a public service). Requests are trusted only with the secret token
 # given to setWebhook, and only messages from TELEGRAM_ADMIN_IDS get an answer.
 #
 #   TELEGRAM_BOT_TOKEN       from @BotFather

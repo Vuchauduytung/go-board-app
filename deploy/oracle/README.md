@@ -5,7 +5,7 @@ OCPU + 9.000 GB-giờ RAM mỗi tháng**, tức một VM **2 OCPU / 12 GB** ch�
 
 | Thành phần | Chạy ở |
 |---|---|
-| Web + nhận dạng ảnh + trợ lý + review SGF | container `app` (cùng `Dockerfile` với Cloud Run, ~4 GB RAM) |
+| Web + nhận dạng ảnh + trợ lý + review SGF | container `app` (`Dockerfile` ở thư mục gốc, ~4 GB RAM) |
 | Lịch sử chat, hạn mức, cache KataGo | container `valkey` |
 | KataGo | Modal GPU L4 (khuyến nghị; tốn credit Modal khi dùng) hoặc CPU của VM (profile `katago`, chậm) |
 | HTTPS + đăng nhập Google | **DuckDNS + Caddy + oauth2-proxy** (miễn phí, mặc định) hoặc Cloudflare Tunnel + Access (cần tên miền riêng) |
@@ -94,7 +94,7 @@ rsync -a -e "ssh -i ~/Downloads/ssh-key-XXX.key" books/pages/ ubuntu@<IP>:go-boa
 
 ## 5. Đăng nhập Google (OAuth client cho oauth2-proxy)
 
-Dùng luôn project Google Cloud hiện có (đã có màn hình đồng ý OAuth "Go Scan IAP" ở chế độ Testing):
+Dùng một project Google Cloud bất kỳ (bản đang chạy dùng `project-1a0ed8d8-…`, màn hình đồng ý ở chế độ Testing):
 
 1. https://console.cloud.google.com → APIs & Services → **Credentials** → Create credentials → **OAuth client ID**.
 2. Application type: **Web application**, tên `Go Scan Oracle`.
@@ -129,16 +129,6 @@ Allow theo email. Trong `.env`: `COMPOSE_PROFILES=cloudflare`, `TRUST_FORWARDED_
 
 **Chỉ bật một** trong `TRUST_FORWARDED_EMAIL` / `TRUST_CF_ACCESS`, đúng với proxy đang dùng: app tin header đăng nhập
 của proxy đó.
-
-## Mang dữ liệu từ Cloud Run sang (tuỳ chọn)
-
-```bash
-gcloud storage rsync -r gs://<project>-go-scan/sessions /tmp/go-scan/sessions
-gcloud storage rsync -r gs://<project>-go-scan/scans /tmp/go-scan/scans
-rsync -a -e "ssh -i ~/Downloads/ssh-key-XXX.key" /tmp/go-scan/ ubuntu@<IP>:/srv/go-scan/
-```
-
-Ván cờ được lưu theo email, nên cùng tài khoản Google sẽ thấy lại ván của mình.
 
 ## Vận hành
 
