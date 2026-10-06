@@ -181,6 +181,8 @@
   .voicebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 14px; }
   .voicebar button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
                      padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  .voicenote { margin-top: 8px; padding: 8px 10px; border-radius: 9px; font-size: 13px; background: #efe7da; }
+  .voicenote.err { background: #f8e3e1; color: var(--err); }
   .msg .say { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
               cursor: pointer; padding: 0; }
   ul.reviews .reply { margin: 8px 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--accent); background: #f6f1e8;
@@ -335,13 +337,10 @@
         <label><input type="checkbox" id="speakToggle"> 🔊 Đọc to câu trả lời</label>
         <button type="button" id="speakStop" hidden>⏹ Dừng đọc</button>
       </div>
+      <div class="voicenote" id="voiceNote" hidden></div>
       <div class="muted field" id="quota"></div>
     </div>
 
-    <details>
-      <summary>Xem ma trận (0 trống, 1 đen, 2 trắng)</summary>
-      <pre id="matrixText"></pre>
-    </details>
   </section>
 
   <section class="card">
@@ -557,7 +556,6 @@ function render() {
   renderVars();
   renderTree();
   $('nb').textContent = nb; $('nw').textContent = nw;
-  $('matrixText').textContent = matrix.map(r => r.join(' ')).join('\n');
 }
 
 const NAME = { B: 'Đen', W: 'Trắng' };
@@ -1704,6 +1702,7 @@ $('coachSuggest').addEventListener('click', e => {
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const canRecord = () => !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 const canSpeak = () => 'speechSynthesis' in window;
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let listening = null;   // {stop()} while the microphone is on
 let useServerStt = !SR;
 
@@ -1712,40 +1711,54 @@ function micState(on, hint) {
   $('micBtn').textContent = on ? '⏺' : '🎤';
   $('coachQ').placeholder = hint || 'Ví dụ: Nước Q16 có tốt không?';
 }
+// What the microphone is doing, right under it (the status line at the top of the page is out of sight here)
+function voiceMsg(kind, html) {
+  $('voiceNote').hidden = !kind;
+  $('voiceNote').className = 'voicenote' + (kind === 'err' ? ' err' : '');
+  $('voiceNote').innerHTML = html || '';
+}
+const MIC_DENIED = 'Chưa được phép dùng micro. Bấm biểu tượng 🔒 / ⓘ cạnh địa chỉ trang → <b>Quyền</b> → bật <b>Micrô</b>, rồi bấm 🎤 lại.';
 
+// The browser's own recognition (Google's on Chrome, Apple's on Safari); on any trouble but a refusal or silence,
+// the recording goes to the server instead
 function listenBrowser() {
-  const rec = new SR();
+  let rec;
+  try { rec = new SR(); } catch (e) { fallback('khởi tạo'); return; }
   rec.lang = 'vi-VN'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
-  let text = '', failed = false;
+  let text = '', error = null, started = false;
+  function fallback(why) {
+    if (listening?.rec === rec) listening = null;
+    micState(false);
+    if (canRecord()) { useServerStt = true; voiceMsg('info', 'Trình duyệt không nhận giọng được (' + esc(why) + '), chuyển sang ghi âm…'); listenServer(); }
+    else voiceMsg('err', 'Trình duyệt này không hỗ trợ nhận giọng nói (' + esc(why) + '). Mở trang bằng Chrome hoặc Safari nhé.');
+  }
+  rec.onstart = () => { started = true; voiceMsg('info', '🎙 Đang nghe… nói câu hỏi, nói xong sẽ tự gửi (bấm ⏺ để dừng).'); };
   rec.onresult = e => {
     text = [...e.results].map(r => r[0].transcript).join(' ').trim();
     $('coachQ').value = text;
   };
-  rec.onerror = e => {
-    failed = true;
-    if (['network', 'service-not-allowed', 'language-not-supported'].includes(e.error) && canRecord()) {
-      useServerStt = true;   // this browser has the API but no working service: record instead from now on
-      listening = null; micState(false);
-      listenServer();
-      return;
-    }
-    setStatus('err', e.error === 'not-allowed' ? 'Chưa được phép dùng micro: cho phép micro cho trang này rồi thử lại.'
-      : e.error === 'no-speech' ? 'Không nghe thấy gì, bấm 🎤 và nói lại nhé.' : 'Lỗi nhận giọng nói: ' + esc(e.error));
-  };
+  rec.onerror = e => { error = e.error; };
   rec.onend = () => {
+    clearTimeout(watchdog);
     if (listening?.rec !== rec) return;
     listening = null; micState(false);
-    if (text && !failed) askCoach(text, { voice: true });
+    if (text) { voiceMsg(); askCoach(text, { voice: true }); return; }
+    if (error === 'not-allowed') voiceMsg('err', MIC_DENIED);
+    else if (error === 'no-speech' || (!error && started)) voiceMsg('err', 'Không nghe thấy gì, bấm 🎤 và nói lại nhé.');
+    else fallback(error || 'không bắt đầu được');
   };
-  rec.start();
+  // some browsers never start (busy microphone, no recognition service): record instead after a few seconds
+  const watchdog = setTimeout(() => { if (!started && listening?.rec === rec) { try { rec.abort(); } catch (e) {} fallback('không phản hồi'); } }, 4000);
+  try { rec.start(); } catch (e) { clearTimeout(watchdog); fallback(e.message); return; }
   listening = { rec, stop: () => rec.stop() };
-  micState(true, 'Đang nghe… nói câu hỏi của bạn');
+  micState(true, 'Đang nghe…');
+  voiceMsg('info', 'Đang bật micro…');
 }
 
 async function listenServer() {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch (e) { setStatus('err', 'Chưa được phép dùng micro: cho phép micro cho trang này rồi thử lại.'); return; }
+  catch (e) { micState(false); voiceMsg('err', e.name === 'NotAllowedError' ? MIC_DENIED : 'Không mở được micro: ' + esc(e.message)); return; }
   const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm']
     .find(t => MediaRecorder.isTypeSupported?.(t)) || '';
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
@@ -1775,6 +1788,7 @@ async function listenServer() {
     ctx?.close();
     listening = null;
     micState(false, 'Đang chuyển giọng nói thành chữ…');
+    voiceMsg('info', '<span class="spinner"></span>Đang chuyển giọng nói thành chữ…');
     $('micBtn').disabled = true;
     try {
       const fd = new FormData();
@@ -1784,10 +1798,11 @@ async function listenServer() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail || r.statusText);
       if (!j.text) throw new Error('Không nghe rõ, bấm 🎤 và nói lại nhé.');
+      voiceMsg();
       $('coachQ').value = j.text;
       askCoach(j.text, { voice: true });
     } catch (err) {
-      setStatus('err', esc(err.message));
+      voiceMsg('err', esc(err.message));
     } finally {
       $('micBtn').disabled = false;
       micState(false);
@@ -1796,13 +1811,14 @@ async function listenServer() {
   rec.start();
   listening = { stop };
   micState(true, 'Đang nghe… nói xong sẽ tự gửi');
+  voiceMsg('info', '🎙 Đang ghi âm… nói câu hỏi, im lặng một chút là tự gửi (bấm ⏺ để dừng).');
 }
 
 $('micBtn').hidden = !SR && !canRecord();
 $('micBtn').addEventListener('click', () => {
   if (listening) { listening.stop(); return; }
   stopSpeaking();
-  unlockSpeech();
+  if (IOS) unlockSpeech();   // on Android an utterance here would take the microphone from the recognition
   if (useServerStt) listenServer(); else listenBrowser();
 });
 
@@ -1837,7 +1853,7 @@ function speak(text) {
   const all = speakable(text);
   if (!all) return;
   if (!viVoice && speechSynthesis.getVoices().length) {
-    setStatus('info', 'Máy chưa có giọng đọc tiếng Việt: cài <b>Google Text-to-Speech</b> (Android) hoặc thêm giọng Tiếng Việt trong Cài đặt › Trợ năng › Nội dung được đọc (iPhone).');
+    voiceMsg('info', 'Máy chưa có giọng đọc tiếng Việt: cài <b>Google Text-to-Speech</b> (Android) hoặc thêm giọng Tiếng Việt trong Cài đặt › Trợ năng › Nội dung được đọc (iPhone).');
   }
   const parts = all.match(/[^.!?;:]+[.!?;:]*\s*/g) || [all];
   const chunks = [];
