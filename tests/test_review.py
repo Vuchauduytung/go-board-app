@@ -147,3 +147,29 @@ def test_best_line_from_any_position():
     last = kg.calls
     review.extend_from(kg, base, 'W', first + ['pass', 'pass'], 10)   # the game is over: nothing more to search
     assert kg.calls == last
+
+
+def test_review_of_a_game_against_the_ai_uses_what_was_searched(storage):
+    game = review.game_from_moves([[0] * 9 for _ in range(9)],
+                                  [['B', 'E5'], ['W', 'C3'], ['B', 'G7'], ['W', 'pass'], ['B', 'C7'], ['W', 'G3']],
+                                  6.5, 'Bạn', 'AI 3k')
+    assert game['moves'][3] == ['W', 'pass'] and game['komi'] == 6.5
+    with pytest.raises(review.SgfError):
+        review.game_from_moves([[0] * 9 for _ in range(9)], [['B', 'E5'], ['W', 'E5']], 6.5, 'a', 'b')
+    kg = FakeKataGo()
+    known = {}   # what the game searched: every position, with the review's full search settings
+    for i in range(len(game['moves']) + 1):
+        payload = {**review.position(game, i), **coach.ROOT}
+        known[kgcache.key(payload)] = kg(payload)
+    scans = []
+
+    def katago(p):
+        if p.get('max_visits') == review.SCAN_VISITS:
+            scans.append(p)
+        return kg(p)
+    r = review.new_review(game)
+    while r['status'] != 'done':
+        r = review.step(game, r, katago, seconds=5, peek=lambda p: known.get(kgcache.key(p)))
+    assert not scans and r['done'] == len(game['moves']) + 1   # no position scanned again
+    # and the deep searches are the very queries already answered (a cache hit in the app)
+    assert all(kgcache.key({**review.position(game, int(i)), **coach.ROOT}) in known for i in r['deep'])

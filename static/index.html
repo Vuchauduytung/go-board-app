@@ -313,6 +313,7 @@
         <button type="button" id="vsAi">🤖 AI đi</button>
         <button type="button" id="vsResign">🏳 Xin thua</button>
         <button type="button" id="vsCount">Đếm điểm</button>
+        <button type="button" id="vsReview" hidden>📋 Review ván này</button>
       </div>
     </div>
     <div class="follow" id="followBox">
@@ -1083,7 +1084,7 @@ async function openSession(id) {
   played = s.played; toPlay = s.to_play; startTurn = s.start_turn;
   variations = s.variations || [];
   tree = s.tree ? treeFrom(s.tree) : newNode(null, null);
-  play = s.play ? { ...s.play, thinking: false } : null;
+  play = s.play ? { passes_at: [], ...s.play, thinking: false } : null;
   if (!s.tree && game) lightLine(gameStones(game.moves));   // older SGF sessions: the game is the main line
   replay();
   showReview(s.review);
@@ -1404,7 +1405,9 @@ function showReviewLineText(rl) {
 }
 
 // ---- game against the AI: the player taps a move, the AI answers with a KataGo candidate drawn for its level
-// (bot.py: 5k–5d). The bar shows both sides' average loss per move, to calibrate the levels. ----
+// (bot.py: 5k–5d). The bar shows both sides' average loss per move, to calibrate the levels. Every position is
+// searched as the review would (the AI's while it chooses, the player's in the background while they think, never
+// shown), so 📋 Review at the end finds them all in the session's cache. ----
 const avg = xs => xs.length ? (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2) : '–';
 const you = () => play.ai === 'B' ? 'W' : 'B';
 
@@ -1421,7 +1424,45 @@ function renderPlay() {
   $('vsPass').disabled = $('vsResign').disabled = $('vsCount').disabled = !playing || play.thinking || toPlay === play.ai;
   $('vsAi').disabled = !playing || play.thinking || toPlay !== play.ai;
   $('vsUndo').disabled = !playing || play.thinking || !cur.parent;
+  $('vsReview').hidden = !play.over || !!game;
 }
+
+// The player's position searched while they think: kept for the review, and what their move gives away
+async function thinkAhead() {
+  if (!play || play.over || toPlay === play.ai) return;
+  const g = play, len = played.length;
+  try {
+    const s = await ensureSession();
+    const j = await apiJson('api/play', { method: 'POST', body: { ...kataHistory(), komi: komi(), level: g.level, session_id: s?.id, think: true } });
+    if (play === g && played.length === len) g.think = { len, best_lead: j.best_lead };
+  } catch (e) { /* only an index for the review */ }
+}
+
+// The game as played, passes included
+function gameMoves() {
+  const passes = (play.passes_at || []).filter(q => q.at <= played.length), out = [];
+  const passAt = i => passes.filter(q => q.at === i).forEach(q => out.push([q.color, 'pass']));
+  played.forEach((p, i) => {
+    passAt(i);
+    if (p.color) out.push([p.color === 1 ? 'B' : 'W', COLS[p.c] + (matrix.length - p.r)]);
+  });
+  passAt(played.length);
+  return out;
+}
+
+$('vsReview').addEventListener('click', async () => {
+  if (!play?.over || game) return;
+  try {
+    await saveNow();
+    const j = await apiJson(`api/sessions/${session.id}/play/review`, { method: 'POST', body: { moves: gameMoves() } });
+    game = j.game;
+    showReview(j.review);
+    render();
+    loadSessions();
+    $('reviewBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    runReview();
+  } catch (err) { setStatus('err', 'Chưa review được: ' + esc(err.message)); }
+});
 
 // The position for KataGo with its history (ko), as the coach sends it; a pass of the side not to move is added
 function kataHistory() {
@@ -1439,15 +1480,15 @@ $('aiStart').addEventListener('click', async () => {
   await saveNow();   // the board being left keeps its last changes
   emptyBoard(+$('size').value);
   const c = $('aiColor').value, mine = c === 'R' ? (Math.random() < .5 ? 'B' : 'W') : c;
-  play = { level: $('aiLevel').value, ai: mine === 'B' ? 'W' : 'B', komi: +$('aiKomi').value, passes: 0,
-           ai_losses: [], user_losses: [], expect: null, over: null, started_at: Date.now() };
+  play = { level: $('aiLevel').value, ai: mine === 'B' ? 'W' : 'B', komi: +$('aiKomi').value, passes: 0, passes_at: [],
+           ai_losses: [], user_losses: [], expect: null, think: null, over: null, started_at: Date.now() };
   $('aiSetup').hidden = true;
   $('meta').textContent = `${matrix.length}×${matrix.length} · đấu AI ${play.level}`;
   render();
   try { await ensureSession(); } catch (e) { /* played without keeping it */ }
   setStatus('ok', `Ván mới với AI ${play.level}: bạn cầm ${NAME[mine]}${mine === 'B' ? ', chạm bàn cờ để đi nước đầu' : ', AI đi trước'}.`);
   $('resultCard').scrollIntoView({ behavior: 'smooth' });
-  if (play.ai === 'B') aiMove();
+  if (play.ai === 'B') aiMove(); else thinkAhead();
 });
 
 async function aiMove() {
@@ -1461,8 +1502,11 @@ async function aiMove() {
     const j = await apiJson('api/play', { method: 'POST', body: { ...kataHistory(), komi: komi(), level: g.level, session_id: s?.id } });
     if (play !== g || played.length !== atLen || toPlay !== g.ai) return;   // the board changed meanwhile
     // the player's move just before, judged by this search: what it gave away next to what the AI expected
-    if (g.expect && g.expect.len + 1 === played.length) g.user_losses.push(Math.max(0, +(j.score_lead - g.expect.lead).toFixed(2)));
-    g.expect = null;
+    // the player's move just before: its loss from the search of their position (best lead there against the lead
+    // left after it), else next to what the AI expected after its own move
+    if (g.think && g.think.len + 1 === played.length && g.think.best_lead != null) g.user_losses.push(Math.max(0, +(g.think.best_lead + j.score_lead).toFixed(2)));
+    else if (g.expect && g.expect.len + 1 === played.length) g.user_losses.push(Math.max(0, +(j.score_lead - g.expect.lead).toFixed(2)));
+    g.expect = null; g.think = null;
     if (j.resign) { g.over = `AI ${g.level} (${NAME[g.ai]}) xin thua: bạn thắng!`; setStatus('ok', g.over); return; }
     let done = null;
     for (const mv of [j.move, ...j.alternatives]) {   // the next candidates when one is illegal here (ko)
@@ -1475,6 +1519,7 @@ async function aiMove() {
     if (done === j.move) g.ai_losses.push(j.loss);
     g.expect = { len: played.length, lead: j.chosen_lead };
     setStatus('info', `AI ${g.level} đi <b>${done}</b> · tới lượt bạn.`);
+    setTimeout(thinkAhead);
   } catch (err) {
     setStatus('err', 'AI chưa đi được: ' + esc(err.message) + ' · bấm <b>🤖 AI đi</b> để thử lại.');
   } finally {
@@ -1485,7 +1530,9 @@ async function aiMove() {
 
 function aiPass() {
   play.passes++;
+  play.passes_at.push({ at: played.length, color: play.ai });
   toPlay = you();
+  if (play.passes < 2) setTimeout(thinkAhead);
   setStatus('info', `AI bỏ lượt${play.passes >= 2 ? '' : ' · tới lượt bạn (bỏ lượt nữa là hết ván)'}.`);
   if (play.passes >= 2) countScore();
 }
@@ -1493,6 +1540,7 @@ function aiPass() {
 $('vsPass').addEventListener('click', () => {
   if (!play || play.over || toPlay === play.ai) return;
   play.passes++;
+  play.passes_at.push({ at: played.length, color: you() });
   toPlay = play.ai;
   render(); saveSoon();
   if (play.passes >= 2) countScore(); else aiMove();
@@ -1511,9 +1559,11 @@ $('vsUndo').addEventListener('click', () => {   // back to the player's previous
   goTo(node);
   if (lastColor === (play.ai === 'B' ? 1 : 2)) play.ai_losses.pop();
   play.user_losses.pop();
-  play.passes = 0; play.expect = null;
+  play.passes = 0; play.expect = null; play.think = null;
+  play.passes_at = (play.passes_at || []).filter(q => q.at < played.length);
   setStatus('info', `Đã đi lại · tới lượt bạn (${NAME[toPlay]}).`);
   render(); saveSoon();
+  thinkAhead();
 });
 
 // The result as KataGo sees the position (komi included): who is ahead and by how much

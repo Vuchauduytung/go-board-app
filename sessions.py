@@ -170,6 +170,11 @@ def has_scan(user, scan_id):
     return any(s.get('scan_id') == scan_id for s in _all(user))
 
 
+def set_game(user, sid, game, review):
+    """A game record (and its review, from the start) for a session played on the board."""
+    return _change(user, sid, lambda s: s.update(game=game, review=review, updated_at=time.time()))
+
+
 def set_review(user, sid, review):
     return _change(user, sid, lambda s: s.update(review=review, updated_at=time.time()))
 

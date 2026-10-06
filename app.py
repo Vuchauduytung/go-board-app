@@ -725,7 +725,7 @@ def review_step(sid: str, user: str = Depends(current_user)):
     r = s.get('review') or review.new_review(s['game'])
     if r['status'] != 'done':
         try:
-            r = review.step(s['game'], r, _katago_for(user, sid))
+            r = review.step(s['game'], r, _katago_for(user, sid), peek=lambda p: kgcache.lookup(p, (user, sid)))
         except QuotaExceeded as ex:
             raise HTTPException(429, str(ex))
         except KataGoError as ex:
@@ -769,6 +769,7 @@ class PlayIn(BaseModel):
     komi: float = 7.5
     level: str = '1k'
     session_id: Optional[str] = None
+    think: bool = False              # only search the player's position (kept for the review), no move
 
 
 @app.post('/api/play')
@@ -789,9 +790,34 @@ def play_move(body: PlayIn, user: str = Depends(current_user)):
         raise HTTPException(429, str(ex))
     except KataGoError as ex:
         raise HTTPException(ex.status, str(ex))
+    if body.think:   # nothing that would hint the player: only what judges their move once played
+        return {'score_lead': res['score_lead'], 'best_lead': bot.best(res)['score_lead'] if res['moves'] else None}
     out = bot.choose(res, body.level)
     out['resign'] = bot.should_resign(res, len(body.moves))
     return out
+
+
+class PlayReviewIn(BaseModel):
+    moves: List[List[str]]   # the game as played, passes included
+
+
+@app.post('/api/sessions/{sid}/play/review')
+def review_game_vs_ai(sid: str, body: PlayReviewIn, user: str = Depends(current_user)):
+    """A finished game against the AI becomes a game record to review; the positions searched while playing are
+    in the session's cache, so the review needs little or no more KataGo."""
+    s = _own_session(user, sid)
+    p = s.get('play')
+    if not p:
+        raise HTTPException(400, 'Đây không phải ván đấu với AI')
+    me = 'B' if p['ai'] == 'W' else 'W'
+    names = {p['ai']: f'AI {p["level"]}', me: feedback.display_name(user)}
+    try:
+        game = review.game_from_moves(s['base'], body.moves, p.get('komi', 7.5), names['B'], names['W'],
+                                      p.get('over'), time.strftime('%Y-%m-%d'))
+    except review.SgfError as ex:
+        raise HTTPException(400, str(ex))
+    sessions.set_game(user, sid, game, review.new_review(game))
+    return {'game': game, 'review': review.progress(review.new_review(game))}
 
 
 class BestLineIn(BaseModel):

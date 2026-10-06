@@ -68,6 +68,12 @@ def put(payload, value):
             _local.popitem(last=False)
 
 
+def lookup(payload, session=None):
+    """The answer to this query if it was searched before (the session's own cache first), without searching."""
+    value = sessions.cache_get(*session, key(payload)[len(PREFIX):]) if session else None
+    return value if value is not None else peek(payload)
+
+
 def cached(run, payload, session=None):
     """run(payload) on a cache miss, remembering the answer; session = (user, session id) also indexes the
     answer in that session."""

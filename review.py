@@ -77,14 +77,36 @@ def position(game, i):
             'komi': game['komi'], 'rules': game['rules']}
 
 
+def game_from_moves(base, moves, komi, black, white, result=None, date=None):
+    """A game record like parse_sgf's from moves played on `base` ([["B", "Q16" | "pass"]], colours as played).
+    Raises SgfError for a move off the board or onto a stone."""
+    n = len(base)
+    if not moves:
+        raise SgfError('Ván cờ không có nước đi nào')
+    board = base
+    for k, (who, mv) in enumerate(moves):
+        if who not in ('B', 'W'):
+            raise SgfError(f'Nước {k + 1}: màu không hợp lệ')
+        if mv == 'pass':
+            continue
+        rc = coach.parse_point(mv, n)
+        if rc is None or board[rc[0]][rc[1]]:
+            raise SgfError(f'Nước {k + 1} ({mv}) không hợp lệ')
+        board, _ = coach.play(board, rc[0], rc[1], 1 if who == 'B' else 2)
+    return {'board_size': n, 'base': base, 'moves': [list(m) for m in moves], 'komi': float(komi), 'rules': 'chinese',
+            'black': black, 'white': white, 'result': result, 'date': date}
+
+
 def new_review(game):
     return {'status': 'running', 'phase': 'scan', 'total': len(game['moves']) + 1, 'done': 0, 'positions': {},
             'deep': {}, 'mistakes': {'B': [], 'W': []}, 'started_at': time.time()}
 
 
-def _scan(katago, game, i):
-    """[winrate, lead, best move, best lead, lead of the move played or None] for the side to move at i."""
-    res = katago({**position(game, i), 'max_visits': SCAN_VISITS, 'top': 40, 'ownership': False})
+def _scan(katago, game, i, peek=None):
+    """[winrate, lead, best move, best lead, lead of the move played or None] for the side to move at i. A full
+    search of the position done before (a game against the AI searches every position) is used instead."""
+    res = (peek and peek({**position(game, i), **coach.ROOT})) or \
+        katago({**position(game, i), 'max_visits': SCAN_VISITS, 'top': 40, 'ownership': False})
     best = res['moves'][0] if res['moves'] else None
     played = game['moves'][i][1] if i < len(game['moves']) else None
     mine = next((m for m in res['moves'] if m['move'] == played and m['visits'] >= 2), None)
@@ -177,8 +199,9 @@ def _finish(game, review):
     review.update(status='done', phase='done', finished_at=time.time())
 
 
-def step(game, review, katago, seconds=STEP_SECONDS):
-    """Do up to `seconds` of work on the review (scan positions, then deepen the candidate mistakes)."""
+def step(game, review, katago, seconds=STEP_SECONDS, peek=None):
+    """Do up to `seconds` of work on the review (scan positions, then deepen the candidate mistakes).
+    peek(payload): an answer already known for a query, or None (see _scan)."""
     end = time.time() + seconds
     with ThreadPoolExecutor(PARALLEL) as pool:
         while review['phase'] == 'scan' and time.time() < end:
@@ -187,7 +210,7 @@ def step(game, review, katago, seconds=STEP_SECONDS):
                 review['phase'] = 'deep'
                 review['candidates'] = _candidates(game, review)
                 break
-            for i, res in zip(todo, pool.map(lambda i: _scan(katago, game, i), todo)):
+            for i, res in zip(todo, pool.map(lambda i: _scan(katago, game, i, peek), todo)):
                 review['positions'][str(i)] = res
             review['done'] = len(review['positions'])
         while review['phase'] == 'deep' and time.time() < end:
