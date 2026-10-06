@@ -38,3 +38,10 @@ def test_unfinished_border_goes_by_ownership():
     board[2][1], board[2][3] = B, W
     res = score.count(board, own_from(['bb.ww'] * 5), komi=0)
     assert len(res['territory']['B']) == 9 and len(res['territory']['W']) == 9 and len(res['dame']) == 5
+
+
+def test_ownership_seen_from_black_whoever_is_to_move():
+    own_white_to_move = [[-v for v in row] for row in OWN]     # as KataGo gives it with White to move
+    assert score.black_view(own_white_to_move, 'W') == OWN and score.black_view(OWN, 'B') == OWN
+    res = score.count(BOARD, score.black_view(own_white_to_move, 'W'), komi=0.5)
+    assert res['dead'] == [[1, 1]] and res['lead'] == 4.5

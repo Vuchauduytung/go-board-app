@@ -54,3 +54,16 @@ def test_levels_from_the_environment(monkeypatch):
     assert b.LEVELS['1k'] == (0.5, 4) and b.LEVELS['5k'] == (1.5, 15)
     monkeypatch.delenv('BOT_LEVELS')
     importlib.reload(bot)
+
+
+def test_passes_at_the_end_never_in_the_middle():
+    end = answer([0.5, 0.4, 0.3])
+    end['moves'][1]['move'] = 'pass'                           # passing loses 0.1: the game is over
+    assert all(bot.choose(end, '5k', random.Random(i))['move'] == 'pass' for i in range(50))
+    filling = answer([0.5, 0.5, -0.2])
+    filling['moves'][2]['move'] = 'pass'                       # 0.7 to gain still: plays on…
+    assert bot.choose(filling, '1k', random.Random(0))['move'] != 'pass'
+    assert bot.choose(filling, '1k', random.Random(0), opponent_passed=True)['move'] == 'pass'   # …unless you passed
+    middle = answer([3, 2, 1, -6])
+    middle['moves'][3]['move'] = 'pass'
+    assert not any(bot.choose(middle, '5k', random.Random(i))['move'] == 'pass' for i in range(300))

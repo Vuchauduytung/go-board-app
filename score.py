@@ -25,6 +25,13 @@ def _region(m, r, c):
     return seen, edge
 
 
+def black_view(ownership, side_to_move):
+    """KataGo's ownership is for the side to move, which is the opposite of the last move's colour, not the
+    to_play the KataGo service echoes (the first mover: wrong after an odd number of moves or after a pass)."""
+    sign = 1 if side_to_move == 'B' else -1
+    return [[sign * v for v in row] for row in ownership]
+
+
 def count(board, own_black, komi, toggles=()):
     """board: rows of 0 / 1 black / 2 white; own_black: KataGo ownership, + for Black; toggles: points of groups whose
     life is flipped from KataGo's. -> {dead, territory: {B, W}, dame, black, white, lead (Black's, komi in)}."""

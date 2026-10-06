@@ -27,6 +27,8 @@ LEVELS.update({k: tuple(v) for k, v in json.loads(os.environ.get('BOT_LEVELS') o
 UNSURE = 1.5        # points added to the loss of a move searched once (less for more visits, see above)
 SEARCH = coach.ROOT   # the review's own full search, so a finished game is reviewed from what was searched
 RELIABLE = 0.1      # the best move is taken among candidates with at least this share of the top visits
+PASS_WHEN_DONE = 0.3     # the AI passes when passing loses at most this (nothing left worth a move)…
+PASS_AFTER_PASS = 1.0    # …or this much once the player has passed (filling its own area gains nothing)
 RESIGN_WINRATE = 0.02
 RESIGN_AFTER = 80   # moves
 
@@ -53,7 +55,7 @@ def best(res):
     return max((m for m in res['moves'] if m['visits'] >= RELIABLE * top), key=lambda m: m['score_lead'])
 
 
-def choose(res, level, rnd=random):
+def choose(res, level, rnd=random, opponent_passed=False):
     """A move for the side to move from a KataGo answer -> {move, loss, alternatives (the other allowed candidates,
     least loss first, for when the chosen one turns out illegal), best, best_lead, score_lead, winrate, resign}."""
     target, cap = LEVELS[level]
@@ -62,6 +64,13 @@ def choose(res, level, rnd=random):
         return {'move': 'pass', 'loss': 0.0, 'alternatives': [], 'best': None, 'best_lead': None,
                 'score_lead': res['score_lead'], 'winrate': res['winrate'], 'resign': False}
     best_move = best(res)
+    passing = next((m for m in moves if m['move'].lower() == 'pass'), None)
+    if passing and best_move['score_lead'] - passing['score_lead'] <= (PASS_AFTER_PASS if opponent_passed else PASS_WHEN_DONE):
+        return {'move': 'pass', 'loss': round(max(0.0, best_move['score_lead'] - passing['score_lead']), 2),
+                'chosen_lead': passing['score_lead'], 'alternatives': [], 'best': best_move['move'],
+                'best_lead': best_move['score_lead'], 'score_lead': res['score_lead'], 'winrate': res['winrate'],
+                'resign': False}
+    moves = [m for m in moves if m['move'].lower() != 'pass'] or moves   # never a random pass in the middle
     sure = UNSURE / math.sqrt(best_move['visits'])
     cands = sorted(((max(0.0, best_move['score_lead'] - m['score_lead'] + UNSURE / math.sqrt(max(1, m['visits'])) - sure), m)
                     for m in moves), key=lambda x: x[0])

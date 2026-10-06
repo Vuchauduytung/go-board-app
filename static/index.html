@@ -318,6 +318,7 @@
         <button type="button" id="vsAi">🤖 AI đi</button>
         <button type="button" id="vsResign">🏳 Xin thua</button>
         <button type="button" id="vsCount">Đếm điểm</button>
+        <button type="button" id="vsLand" hidden>🗺 Xem đất</button>
         <button type="button" id="vsReview" hidden>📋 Review ván này</button>
       </div>
     </div>
@@ -626,13 +627,23 @@ const NAME = { B: 'Đen', W: 'Trắng' };
 const pointName = (r, c) => COLS[c] + (matrix.length - r);
 const clone = m => m.map(row => row.slice());
 
+// During a game against the AI the stones on the board only change by playing, or by ↶ Đi lại
+const inGame = () => !!(play && !play.over);
+function gameLocked() {
+  if (!inGame()) return false;
+  setStatus('info', 'Đang đấu với AI: không đổi được quân trên bàn, chỉ <b>↶ Đi lại</b> (hoặc kết thúc ván trước).');
+  return true;
+}
+
 function updateModeUI() {
   $('modeHint').innerHTML = pickMode ? '📍 Chạm vào một điểm trên bàn cờ để hỏi về nước đó.'
+    : inGame() ? 'Đang đấu với AI: chạm điểm trống để đi · <b>↶ Đi lại</b> để lùi về lượt trước của bạn.'
     : `Chạm điểm trống để đặt quân <b>${NAME[toPlay]}</b> · đặt xong tự đổi màu · <b>chạm giữ</b> một quân để xoá · <b>◀</b> để lùi; đi khác sau khi lùi sẽ mở nhánh mới.`;
   for (const b of $('turn').children) b.classList.toggle('on', b.dataset.p === toPlay);
   for (const id of ['navFirst', 'navBack10', 'undo']) $(id).disabled = !cur.parent;
   const kataMore = followMode === 'kata' && kataLine && !(kataLine.ended && kataLine.k >= kataLine.moves.length);
   for (const id of ['redo', 'navFwd10', 'navLast']) $(id).disabled = followMode === 'kata' ? !kataMore : !cur.sel;
+  $('turn').classList.toggle('locked', inGame());
   for (const b of $('followSeg').children) b.classList.toggle('on', b.dataset.f === followMode);
   renderPlay();
   const kl = kataLine;
@@ -640,6 +651,7 @@ function updateModeUI() {
     : !kl ? '' : kl.k < kl.moves.length ? `▶ đi nước tốt nhất của KataGo · đã tính trước ${kl.moves.length - kl.k} nước${kl.fetching ? ', đang tính thêm…' : ''}.`
     : kl.ended ? 'KataGo: hết biến (ván đã kết thúc).' : kl.error ? `KataGo chưa trả lời: ${kl.error}` : 'KataGo đang tính nước tốt nhất…';
   $('cutBranch').disabled = !cur.parent;
+  if (inGame()) for (const b of [...$('navBar').children, $('cutBranch')]) b.disabled = true;   // only ↶ Đi lại
   if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
 }
 
@@ -747,6 +759,7 @@ function removeStone(r, c) {
   saveSoon();
 }
 $('board').addEventListener('pointerdown', e => {
+  if (inGame() || scoring) return;   // no long-press removal while playing the AI or counting
   const t = e.target.dataset;
   if (t.r === undefined || pickMode || !matrix[+t.r][+t.c]) return;
   clearTimeout(pressTimer);
@@ -822,8 +835,8 @@ function turnAfter(entries) {
   return last ? (last.color === 1 ? 'W' : 'B') : startTurn;
 }
 
-function goTo(node) {
-  if (node === cur) return;
+function goTo(node, force = false) {   // force: ↶ Đi lại of a game against the AI
+  if (node === cur || (!force && gameLocked())) return;
   const path = pathTo(node);
   // a variation on screen stays numbered while moving inside it
   if (activeVar && !(path.length >= activeVar.from && path.slice(0, activeVar.from).every((p, i) => sameMove(p, played[i])))) activeVar = null;
@@ -837,6 +850,7 @@ function goTo(node) {
     : `Nước ${depthOf(node)}: nhấc quân ở ${pointName(m.r, m.c)}.`);
 }
 function step(n) {
+  if (gameLocked()) return;
   if (n > 0 && followMode === 'kata') { kataStep(n); return; }
   let node = cur;
   for (let i = 0; i < Math.abs(n); i++) {
@@ -864,6 +878,7 @@ document.addEventListener('keydown', e => {
 });
 
 $('cutBranch').addEventListener('click', () => {
+  if (gameLocked()) return;
   if (!cur.parent) return;
   let size = 0;
   for (const st = [cur]; st.length;) { const x = st.pop(); size++; st.push(...x.kids); }
@@ -962,6 +977,7 @@ function clearSugg() {
 }
 
 $('turn').addEventListener('click', e => {
+  if (gameLocked()) return;
   const p = e.target.closest('button')?.dataset.p;
   if (!p || p === toPlay) return;
   toPlay = p;
@@ -1449,9 +1465,10 @@ function renderPlay() {
   const counting = !!(scoring && !scoring.confirmed);
   $('vsPass').disabled = $('vsResign').disabled = $('vsCount').disabled = !playing || play.thinking || toPlay === play.ai || counting;
   renderScore();
-  $('vsAi').disabled = !playing || play.thinking || toPlay !== play.ai;
-  $('vsUndo').disabled = !playing || play.thinking || !cur.parent;
+  $('vsAi').disabled = !playing || play.thinking || toPlay !== play.ai || counting;
+  $('vsUndo').disabled = !playing || play.thinking || !cur.parent || counting;
   $('vsReview').hidden = !play.over || !!game;
+  $('vsLand').hidden = !play.over || !!scoring;
 }
 
 // The player's position searched while they think: kept for the review, and what their move gives away
@@ -1526,7 +1543,8 @@ async function aiMove() {
   try {
     let s = null;
     try { s = await ensureSession(); } catch (e) { /* searched without indexing it in a session */ }
-    const j = await apiJson('api/play', { method: 'POST', body: { ...kataHistory(), komi: komi(), level: g.level, session_id: s?.id } });
+    const j = await apiJson('api/play', { method: 'POST', body: { ...kataHistory(), komi: komi(), level: g.level, session_id: s?.id,
+                                                                    opponent_passed: g.passes > 0 } });
     if (play !== g || played.length !== atLen || toPlay !== g.ai) return;   // the board changed meanwhile
     // the player's move just before, judged by this search: what it gave away next to what the AI expected
     // the player's move just before: its loss from the search of their position (best lead there against the lead
@@ -1534,7 +1552,7 @@ async function aiMove() {
     if (g.think && g.think.len + 1 === played.length && g.think.best_lead != null) g.user_losses.push(Math.max(0, +(g.think.best_lead + j.score_lead).toFixed(2)));
     else if (g.expect && g.expect.len + 1 === played.length) g.user_losses.push(Math.max(0, +(j.score_lead - g.expect.lead).toFixed(2)));
     g.expect = null; g.think = null;
-    if (j.resign) { g.over = `AI ${g.level} (${NAME[g.ai]}) xin thua: bạn thắng!`; setStatus('ok', g.over); return; }
+    if (j.resign) { g.over = `AI ${g.level} (${NAME[g.ai]}) xin thua: bạn thắng!`; setStatus('ok', g.over); showEstimate(); return; }
     let done = null;
     for (const mv of [j.move, ...j.alternatives]) {   // the next candidates when one is illegal here (ko)
       if (mv === 'pass') { done = 'pass'; break; }
@@ -1577,13 +1595,14 @@ $('vsResign').addEventListener('click', () => {
   if (!play || play.over || !confirm('Xin thua ván này?')) return;
   play.over = `Bạn xin thua: AI ${play.level} thắng.`;
   setStatus('info', play.over); render(); saveSoon();
+  showEstimate();
 });
 $('vsUndo').addEventListener('click', () => {   // back to the player's previous turn
   if (!play || play.over || play.thinking || !cur.parent) return;
   let node = cur.parent;
   if (turnAfter(pathTo(node)) !== you() && node.parent) node = node.parent;
   const lastColor = cur.m?.color;
-  goTo(node);
+  goTo(node, true);
   if (lastColor === (play.ai === 'B' ? 1 : 2)) play.ai_losses.pop();
   play.user_losses.pop();
   play.passes = 0; play.expect = null; play.think = null;
@@ -1595,13 +1614,15 @@ $('vsUndo').addEventListener('click', () => {   // back to the player's previous
 
 // Counting at the end (two passes, or 'Đếm điểm'): KataGo's ownership marks the dead stones and the territory;
 // a tap on a group flips it dead / alive and the count is made again; then the player confirms or plays on
-function countScore() {
+function countScore(estimate = false) {
   if (!play) return;
-  scoring = { len: played.length, toggles: [], res: null, busy: false, confirmed: false };
+  scoring = { len: played.length, toggles: [], res: null, busy: false, confirmed: estimate, estimate };
   render();
   fetchScore();
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
+// The territory as it stands, after a resignation or on 🗺 Xem đất once the game is over
+function showEstimate() { countScore(true); }
 async function fetchScore() {
   const sc = scoring;
   sc.busy = true; render();
@@ -1624,7 +1645,8 @@ function renderScore() {
   if (!scoring) return;
   const r = scoring.res;
   if (!r) { box.innerHTML = '<span class="spinner"></span>Đang đếm đất…'; return; }
-  box.innerHTML = `<b>Đếm đất</b> <span class="muted">(luật Trung Quốc: quân sống + đất)</span>
+  box.innerHTML = `<b>${scoring.estimate ? 'Ước tính đất' : 'Đếm đất'}</b> <span class="muted">(luật Trung Quốc: quân sống + đất)</span>
+    ${scoring.estimate ? '<button type="button" class="src" data-sc="hide" style="float:right">Ẩn</button>' : ''}
     <table><tr><td></td><td>Quân</td><td>Đất</td><td>Komi</td><td>Tổng</td></tr>
     <tr><td>⚫ Đen</td><td>${r.black.stones}</td><td>${r.black.territory}</td><td></td><td><b>${r.black.total}</b></td></tr>
     <tr><td>⚪ Trắng</td><td>${r.white.stones}</td><td>${r.white.territory}</td><td>${r.white.komi}</td><td><b>${r.white.total}</b></td></tr></table>
@@ -1635,6 +1657,7 @@ function renderScore() {
 $('vsScore').addEventListener('click', e => {
   const act = e.target.closest('button')?.dataset.sc;
   if (!act || !scoring || !play) return;
+  if (act === 'hide') { scoring = null; render(); return; }
   if (act === 'ok' && scoring.res) {
     const r = scoring.res, winner = r.lead >= 0 ? 'B' : 'W';
     scoring.confirmed = true;
@@ -1649,6 +1672,7 @@ $('vsScore').addEventListener('click', e => {
   }
   render(); saveSoon();
 });
+$('vsLand').addEventListener('click', showEstimate);
 $('vsCount').addEventListener('click', () => { if (play && !play.over && confirm('Kết thúc ván và đếm đất?')) countScore(); });
 
 // ---- signed-in user and today's usage ----
@@ -1921,7 +1945,8 @@ function offerActions(el, actions, now) {
     });
     $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
-  if (now) run();
+  if (inGame()) { box.className = 'applied err'; box.innerHTML = `<span>Đang đấu với AI, không đổi bàn cờ: ${what}</span>`; }
+  else if (now) run();
   else show('err', `Bàn cờ đã đổi trong lúc chờ, chưa áp dụng: ${what}`, 'Áp dụng', run);
 }
 // ---- variations: [VarN] in an answer, or a row of the list under the board, puts that line on the board ----
@@ -1942,6 +1967,7 @@ function renderVars() {
 
 // The position the variation starts from, then its moves; ↶ Lùi steps back through them
 function showVariation(name) {
+  if (gameLocked()) return;
   const v = variations.find(x => x.name === name);
   if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return; }
   const before = activeVar?.before || { played: played.slice(), toPlay, startTurn };

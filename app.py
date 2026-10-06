@@ -772,6 +772,7 @@ class PlayIn(BaseModel):
     level: str = '1k'
     session_id: Optional[str] = None
     think: bool = False              # only search the player's position (kept for the review), no move
+    opponent_passed: bool = False    # the player has just passed
 
 
 @app.post('/api/play')
@@ -794,7 +795,7 @@ def play_move(body: PlayIn, user: str = Depends(current_user)):
         raise HTTPException(ex.status, str(ex))
     if body.think:   # nothing that would hint the player: only what judges their move once played
         return {'score_lead': res['score_lead'], 'best_lead': bot.best(res)['score_lead'] if res['moves'] else None}
-    out = bot.choose(res, body.level)
+    out = bot.choose(res, body.level, opponent_passed=body.opponent_passed)
     out['resign'] = bot.should_resign(res, len(body.moves))
     return out
 
@@ -827,9 +828,7 @@ def score_game(body: ScoreIn, user: str = Depends(current_user)):
     except KataGoError as ex:
         raise HTTPException(ex.status, str(ex))
     board, nxt, _ = coach.final_position(body.matrix, body.to_play, body.moves)
-    sign = 1 if res.get('to_play', nxt) == 'B' else -1
-    own = [[sign * v for v in row] for row in res['ownership']]
-    return score.count(board, own, body.komi, [tuple(t) for t in body.toggles])
+    return score.count(board, score.black_view(res['ownership'], nxt), body.komi, [tuple(t) for t in body.toggles])
 
 
 class PlayReviewIn(BaseModel):
