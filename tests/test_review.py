@@ -181,21 +181,31 @@ def test_opening_mistake_gets_the_joseki_in_its_own_corner():
         'Q16': {'settled': False, 'next': [{'move': 'R17', 'rating': 'best'}]},
         'Q16 R17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}, {'move': 'Q17', 'rating': 'best'}]},
         'Q16 R17 R16': {'settled': False, 'next': [{'move': 'Q17', 'rating': 'best'}]},
+        'Q16 R17 Q17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}]},
         'Q16 R17 R16 Q17': {'settled': False, 'next': [{'move': 'P16', 'rating': 'best'}]},
         'Q16 R17 R16 Q17 P16': {'settled': False, 'next': [{'move': 'O18', 'rating': 'best'}]},
         'Q16 R17 R16 Q17 P16 O18': {'settled': True, 'next': []},
     }
-    # the game: Black's 4-4 in the bottom-left (D4), White invades at 3-3 (C3), Black blocks the wrong way… at E3?
-    moves = [['B', 'D4'], ['W', 'C3'], ['B', 'E5'], ['W', 'Q16']]
+    # the bottom-left: Black 4-4 (D4), White 3-3 (C3), Black blocks right (C4), White wrongly at E3 instead of D3;
+    # moves elsewhere in between do not break the corner's sequence
+    moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'E3'], ['B', 'K10']]
     game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
-    r = {'positions': {str(i): [0.5, 0.0, None, 3.0 if i == 2 else 0.0, -3.0 if i == 2 else 0.0] for i in range(5)}}
-    out = review.opening_review(game, r, nodes)
+    pos = {str(i): [0.5, 0.0, None, 0.0, 0.0] for i in range(8)}
+    pos['5'] = [0.5, 0.0, None, 3.0, -3.0]                       # E3 loses 6 points
+    out = review.opening_review(game, {'positions': pos}, nodes)
     assert len(out) == 1
     o = out[0]
-    assert o['number'] == 3 and o['corner'] == 'dưới-trái' and o['loss'] >= 1
-    # R16 in the top-right is C4 (or D3, across the diagonal) in the bottom-left; then the main line, alternating
-    assert o['joseki'][0][0] == 'B' and o['joseki'][0][1] in ('C4', 'D3') and [c for c, _ in o['joseki']] == ['B', 'W', 'B', 'W']
-    # playing the joseki's own move is never reported, however much it cost on the whole board
-    r['positions']['2'] = [0.5, 0.0, None, 3.0, -3.0]
-    good = review.game_from_moves([[0] * 19 for _ in range(19)], [['B', 'D4'], ['W', 'C3'], ['B', 'C4']], 6.5, 'a', 'b')
-    assert review.opening_review(good, r, nodes) == []
+    assert o['number'] == 6 and o['left'] == 6 and o['corner'] == 'dưới-trái' and o['known'] == 3
+    assert o['joseki'][0] == ['W', 'D3'] and [c for c, _ in o['joseki']] == ['W', 'B', 'W']
+    # leaving the joseki with a fine move, then a costly one later: the joseki from where the game left it
+    later = moves[:5] + [['W', 'F3'], ['B', 'Q10'], ['W', 'D3'], ['B', 'K10']]
+    game2 = review.game_from_moves([[0] * 19 for _ in range(19)], later, 6.5, 'a', 'b')
+    pos2 = {str(i): [0.5, 0.0, None, 0.0, 0.0] for i in range(10)}
+    pos2['7'] = [0.5, 0.0, None, 2.0, -2.0]                       # W D3 at move 8 loses 4 points
+    o = review.opening_review(game2, {'positions': pos2}, nodes)[0]
+    assert o['number'] == 8 and o['left'] == 6 and o['left_move'] == 'F3' and o['joseki'][0] == ['W', 'D3']
+    # following the joseki is never reported, however much a move cost on the whole board
+    good = review.game_from_moves([[0] * 19 for _ in range(19)],
+                                  [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'D3']], 6.5, 'a', 'b')
+    assert review.opening_review(good, {'positions': pos}, nodes) == []
+    assert review._quarter((9, 9)) == 0 and review._quarter((18, 0)) == 3

@@ -146,6 +146,40 @@ def build(katago, max_nodes=2500, visits=500, parallel=8, log=print):
 # positions so the app shows the deeper tree as it grows. ----
 DEEP_DEPTH = 50
 DEEP_WIDTH, DEEP_BRANCH, DEEP_SINGLE = 1, 0.5, 30
+# The first moves are widened once before deepening: up to WIDE_WIDTH corner moves within WIDE_BRANCH points of the
+# best one, so that the approaches and answers people play (low / high approach, pincers…) are in the tree even when
+# KataGo prefers the 3-3 invasion on an empty board by more than BRANCH; each new branch is then deepened as a line.
+WIDE_DEPTH, WIDE_BRANCH, WIDE_WIDTH = 3, 3.0, 6
+
+
+def widen(katago, tree, visits=300, log=print):
+    """Add the wider first-move branches (marked "wide") to the built tree, once."""
+    nodes = tree['nodes']
+    todo = sorted((k for k, n in nodes.items() if len(k.split()) <= WIDE_DEPTH and not n.get('settled')),
+                  key=lambda k: len(k.split()))
+    for done, key in enumerate(todo, 1):
+        moves = key.split()
+        res, corner_res = search_deep(katago, moves, visits, 60)
+        whole, corner = _trusted(res), sorted((m for m in _trusted(corner_res) if local(m['move'])),
+                                              key=lambda m: -m['score_lead'])
+        if not corner:
+            continue
+        best = max(m['score_lead'] for m in whole + corner)
+        node, sym = nodes[key], symmetric(moves)
+        have = {k['move'] for k in node['next']}
+        for m in corner:
+            d = corner[0]['score_lead'] - m['score_lead']
+            if d > WIDE_BRANCH or len(node['next']) >= WIDE_WIDTH:
+                break
+            if m['move'] in have or (sym and mirror(m['move']) in have):
+                continue
+            node['next'].append({'move': m['move'], 'loss': round(best - m['score_lead'], 2), 'delta': round(d, 2),
+                                 'rating': 'best' if d <= 0.5 else 'good' if d <= 1.0 else 'ok', 'wide': True,
+                                 'visits': m['visits'], 'winrate': m['winrate'], 'score_lead': m['score_lead']})
+            have.add(m['move'])
+        if done % 10 == 0:
+            log(f'widened {done}/{len(todo)} first-move positions')
+    tree['widened'] = True
 
 
 def http_katago(url):
@@ -196,6 +230,11 @@ def deepen(katago, tree, max_depth=DEEP_DEPTH, visits=200, whole_visits=60, save
         depth = len(key.split())
         if depth >= max_depth or node.get('done'):
             continue
+        if depth <= WIDE_DEPTH:                                     # the widened first moves: every branch is a line
+            for k in node.get('next', [])[1:]:
+                if not k.get('tenuki') and f'{key} {k["move"]}' not in nodes:
+                    heap.append(((0, cost(key) + 2 * k['delta'] + 0.1, -depth - 1), counter := counter + 1,
+                                 key.split() + [k['move']], False))
         if node.get('settled') and not node.get('next'):            # a complete joseki: on with its tenuki
             heap.append(((0, cost(key), -len(key.split())), counter := counter + 1, key.split(), True))
         nxt = node.get('next', [])
@@ -273,6 +312,9 @@ def main():
     args = ap.parse_args()
     if args.cmd == 'deepen':
         tree = json.loads(load().read_text())
+        if not tree.get('widened'):
+            widen(http_katago(args.url), tree, log=lambda s: print(s, file=sys.stderr, flush=True))
+            save_tree(tree)
         deepen(http_katago(args.url), tree, args.max_depth, visits=min(args.visits, 300), save=save_tree,
                hours=args.hours, log=lambda s: print(s, file=sys.stderr, flush=True))
         print(f'{len(tree["nodes"])} positions -> {PATH}')

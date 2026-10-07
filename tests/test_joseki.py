@@ -50,3 +50,13 @@ def test_deepen_goes_past_the_joseki_with_tenuki_until_the_corner_is_done(tmp_pa
     assert all(not n['next'] for n in nodes.values() if n.get('done'))
     joseki.save_tree(tree, tmp_path / 't.json')
     assert (tmp_path / 't.json').is_file()
+
+
+def test_widen_adds_the_common_first_moves_once():
+    tree = joseki.build(fake_katago, max_nodes=20, parallel=2, log=lambda s: None)
+    before = len(tree['nodes']['Q16']['next'])
+    joseki.widen(fake_katago, tree, log=lambda s: None)
+    kids = tree['nodes']['Q16']['next']
+    assert tree['widened'] and len(kids) > before and len(kids) <= joseki.WIDE_WIDTH
+    assert any(k.get('wide') for k in kids) and len({k['move'] for k in kids}) == len(kids)
+    assert all(k['delta'] <= joseki.WIDE_BRANCH for k in kids if k.get('wide'))

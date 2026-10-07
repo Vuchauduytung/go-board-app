@@ -117,7 +117,9 @@
   .review { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
   .progress { height: 8px; border-radius: 4px; background: #efe7da; overflow: hidden; margin: 8px 0; }
   .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
-  ol.mistakes { list-style: none; margin: 10px 0 0; padding: 0; }
+  ol.mistakes { list-style: none; margin: 10px 0 0; padding: 0; overflow-y: auto; overscroll-behavior: contain;
+                 border: 1px solid var(--line); border-radius: 10px; }
+  ol.mistakes:empty { border: 0; }
   ol.mistakes li { border-top: 1px solid var(--line); padding: 8px 4px; cursor: pointer; font-size: 14px; border-radius: 8px; }
   ol.mistakes li:first-child { border-top: 0; }
   ol.mistakes li.on { background: #f6f1e8; }
@@ -1290,23 +1292,31 @@ function showReview(r) {
     <li data-o="${i}">
       <div><b>Nước ${o.number}</b> · góc ${o.corner}: ${o.color === 'B' ? '⚫' : '⚪'} <b>${o.move}</b>
         <span class="loss">mất ${o.loss} điểm</span>${o.played_rating ? ` <span class="muted">(trong cây: ${J_RATING[o.played_rating]})</span>` : ''}</div>
-      <div class="line">${o.tenuki ? 'Định thức ở góc này đã xong: nên đi chỗ khác (tenuki).'
-        : `Định thức nên đi: ${o.joseki.map(([c, mv], k) => `${k + 1}.${c === 'B' ? '⚫' : '⚪'}${mv}`).join(' ')}${o.ends ? ' → hết định thức, đi chỗ khác' : ' …'}`}</div>
+      ${o.left && o.left !== o.number ? `<div class="line">Góc rời định thức từ nước ${o.left} (${o.left_color === 'B' ? '⚫' : '⚪'}${o.left_move}${o.left_loss < 0.5 ? ', KataGo vẫn cho là chơi được' : `, mất ${o.left_loss} điểm`}).</div>` : ''}
+      <div class="line">${o.tenuki ? `Tại nước ${o.left || o.number} định thức ở góc này đã xong: nên đi chỗ khác (tenuki).`
+        : `Định thức nên đi${o.left && o.left !== o.number ? ` từ nước ${o.left}` : ''}: ${o.joseki.map(([c, mv], k) => `${k + 1}.${c === 'B' ? '⚫' : '⚪'}${mv}`).join(' ')}${o.ends ? ' → hết định thức, đi chỗ khác' : ' …'}`}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Khai cuộc không có nước sai đáng kể ở góc (so với cây định thức).</li>' : '');
+  requestAnimationFrame(() => { fitThree($('mistakes')); fitThree($('opening')); });
+}
+// Lists of the review: a box showing three items at a time, scrolled inside
+function fitThree(ol) {
+  const h = [...ol.children].slice(0, 3).reduce((t, li) => t + li.getBoundingClientRect().height, 0);
+  ol.style.maxHeight = ol.children.length > 3 && h > 10 ? Math.ceil(h) + 2 + 'px' : '';   // 0 while hidden
 }
 $('opening').addEventListener('click', e => {
   const li = e.target.closest('li[data-o]');
   if (!li) return;
-  const o = reviewData.opening[+li.dataset.o];
-  gotoGameMove(o.number - 1);
+  const o = reviewData.opening[+li.dataset.o], at = o.left || o.number, who = o.left_color || o.color, mv = o.left_move || o.move;
+  gotoGameMove(at - 1);   // where the corner left the joseki
   document.querySelectorAll('#opening li').forEach(x => x.classList.toggle('on', x === li));
   if (o.joseki.length) {
     followMode = 'kata';
-    kataLine = { moves: o.joseki.map(([, mv]) => mv), first: o.color, base: played.slice(), k: 0, matrix: clone(matrix) };
+    kataLine = { moves: o.joseki.map(([, m]) => m), first: who, base: played.slice(), k: 0, matrix: clone(matrix) };
   }
   render();
-  setStatus('info', o.tenuki ? `Thế cờ trước nước ${o.number}: góc ${o.corner} đã xong định thức, ${NAME[o.color]} nên đi chỗ khác thay vì ${o.move}.`
-    : `Thế cờ trước nước ${o.number}: thay vì ${o.move}, định thức ở góc ${o.corner} là số 1–${Math.min(WINDOW, o.joseki.length)} viền xanh · chạm số hoặc ▶ để đi theo.`);
+  setStatus('info', o.tenuki ? `Thế cờ trước nước ${at}: góc ${o.corner} đã xong định thức, ${NAME[who]} nên đi chỗ khác thay vì ${mv}.`
+    : `Thế cờ trước nước ${at}: thay vì ${mv}, định thức ở góc ${o.corner} là số 1–${Math.min(WINDOW, o.joseki.length)} viền xanh`
+      + (at !== o.number ? ` (nước sai ở nước ${o.number})` : '') + ' · chạm số hoặc ▶ để đi theo.');
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 
