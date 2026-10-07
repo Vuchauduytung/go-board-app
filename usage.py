@@ -9,7 +9,15 @@
 #     a free quota running out.
 #   Oracle VM: Always Free A1 within its monthly OCPU / memory hours; the shape is read from the instance metadata.
 #
-# Counters are kept in memory and written every minute to USAGE_DIR/<YYYY-MM>.json ({date: {counter: value}}).
+# Counters are kept in memory and written every minute to USAGE_DIR/<YYYY-MM>.json ({date: {counter: value}}); other
+# processes using KataGo (python -m joseki build…) set SOURCE and write <YYYY-MM>.<source>.json, and the report adds
+# every file of the month: their use is one-off (counted, not projected). The month's first count is kept (_meta.since):
+# the projection runs from there, not from the 1st, when counting started in the middle of a month; with less than
+# MIN_DAYS of counting it is shown as unreliable and raises no alert (spending past the budget still does).
+#
+# Modal's real figure can be given from its dashboard (bot: /modal 16.16): the report then shows that amount plus the
+# estimate of what was used after it. With a spend limit of $0 Modal stops every workload once the credit is spent:
+# KataGo would stop until the next month, which is what the alerts are about.
 #
 #   USAGE_BUDGET_USD (0)  MODAL_FREE_CREDIT_USD (30)  MODAL_GPU_USD_PER_HOUR (0.80, L4; +10 % for its CPU / memory)
 #   ORACLE_FREE_OCPU_HOURS (1500)  ORACLE_FREE_GB_HOURS (9000)  ORACLE_FREE_STORAGE_GB (200)
@@ -38,8 +46,10 @@ GPU_HOURLY = float(os.environ.get('MODAL_GPU_USD_PER_HOUR', '0.80')) * 1.1
 ORACLE_OCPU_HOURS = float(os.environ.get('ORACLE_FREE_OCPU_HOURS', '1500'))
 ORACLE_GB_HOURS = float(os.environ.get('ORACLE_FREE_GB_HOURS', '9000'))
 ORACLE_STORAGE_GB = float(os.environ.get('ORACLE_FREE_STORAGE_GB', '200'))
-LLM_429_ALERT = 10       # rate-limit errors a day before warning that a free quota runs out
+LLM_429_ALERT = 10
+MIN_DAYS = 2             # days of counting before a projection is trusted enough for an alert       # rate-limit errors a day before warning that a free quota runs out
 
+SOURCE = 'app'           # whose counters this process writes (see above)
 _lock = threading.Lock()
 _months = {}             # 'YYYY-MM' -> {date: {counter: value}}
 _dirty = set()
@@ -50,9 +60,14 @@ def _day(t=None):
     return datetime.fromtimestamp(time.time() if t is None else t, VN)
 
 
+def _file(month, source=None):
+    source = source or SOURCE
+    return ROOT / (f'{month}.json' if source == 'app' else f'{month}.{source}.json')
+
+
 def _month(month):
     if month not in _months:
-        f = ROOT / f'{month}.json'
+        f = _file(month)
         _months[month] = (sessions._read(f) or {}) if f.is_file() else {}
     return _months[month]
 
@@ -60,7 +75,10 @@ def _month(month):
 def add(counter, amount=1.0, t=None):
     d = _day(t)
     with _lock:
-        day = _month(d.strftime('%Y-%m')).setdefault(d.strftime('%Y-%m-%d'), {})
+        month = _month(d.strftime('%Y-%m'))
+        meta = month.setdefault('_meta', {})
+        meta['since'] = min(meta.get('since', d.timestamp()), d.timestamp())
+        day = month.setdefault(d.strftime('%Y-%m-%d'), {})
         day[counter] = round(day.get(counter, 0) + amount, 3)
         _dirty.add(d.strftime('%Y-%m'))
 
@@ -82,14 +100,33 @@ def flush():
         _dirty.clear()
     for month, data in todo.items():
         try:
-            sessions._write(ROOT / f'{month}.json', data)
+            sessions._write(_file(month), data)
         except OSError as ex:
             log.warning('usage not written: %s', ex)
 
 
 def days(month):
+    """{date: {counter: value}} of the month, every process's counters added, plus '_meta': {'since': first count}."""
     with _lock:
-        return json.loads(json.dumps(_month(month)))
+        out = json.loads(json.dumps(_month(month)))
+    for f in ROOT.glob(f'{month}*.json') if ROOT.is_dir() else []:
+        if f == _file(month):
+            continue
+        other = sessions._read(f) or {}
+        for key, day in other.items():
+            if key == '_meta':
+                since = day.get('since')
+                if since:
+                    out.setdefault('_meta', {})['since'] = min(out.get('_meta', {}).get('since', since), since)
+                if 'actual' in day and day.get('actual_at', 0) > out.get('_meta', {}).get('actual_at', 0):
+                    out['_meta'].update({k: day[k] for k in ('actual', 'actual_at', 'actual_gpu_seconds')})
+                continue
+            mine = out.setdefault(key, {})
+            for k, v in day.items():
+                if isinstance(v, (int, float)) and not k.startswith('_') and k != 'users':
+                    mine[k] = round(mine.get(k, 0) + v, 3)
+                    mine['oneoff:' + k] = round(mine.get('oneoff:' + k, 0) + v, 3)   # not projected
+    return out
 
 
 _shape = {}
@@ -108,8 +145,20 @@ def oracle_shape():
     return _shape['v']
 
 
+def set_actual(usd, t=None):
+    """Modal's month-to-date cost read on its dashboard: later reports count from it."""
+    d = _day(t)
+    month = d.strftime('%Y-%m')
+    counted = _sum([v for k, v in days(month).items() if k != '_meta'], 'katago:gpu_seconds')
+    with _lock:
+        meta = _month(month).setdefault('_meta', {})
+        meta.update(actual=float(usd), actual_at=d.timestamp(), actual_gpu_seconds=counted)
+        _dirty.add(month)
+    flush()
+
+
 def _sum(day_list, prefix):
-    return sum(v for d in day_list for k, v in d.items() if k.startswith(prefix))
+    return sum(v for d in day_list for k, v in d.items() if k.startswith(prefix) and isinstance(v, (int, float)))
 
 
 def report(now=None, day=None):
@@ -119,22 +168,43 @@ def report(now=None, day=None):
     month = now.strftime('%Y-%m')
     data = days(month)
     n_days = calendar.monthrange(now.year, now.month)[1]
-    elapsed = max(now.day - 1 + (now.hour * 3600 + now.minute * 60) / 86400, 0.25)
+    first = datetime(now.year, now.month, 1, tzinfo=VN)
+    since = max(first, datetime.fromtimestamp(data.get('_meta', {}).get('since', first.timestamp()), VN))
+    counted = max((now - since).total_seconds() / 86400, 0.25)          # days of counting so far
+    left = max((first.replace(day=n_days) + timedelta(days=1) - now).total_seconds() / 86400, 0)
+    project = lambda x: x + x / counted * left                          # so far + the same pace to the month's end
     d = data.get(day.strftime('%Y-%m-%d'), {}) if day.strftime('%Y-%m') == month else days(day.strftime('%Y-%m')).get(day.strftime('%Y-%m-%d'), {})
     alerts = []
 
     # KataGo on Modal
     gpu_h_day = d.get('katago:gpu_seconds', 0) / 3600
-    gpu_h = _sum(data.values(), 'katago:gpu_seconds') / 3600
-    proj_h = gpu_h / elapsed * n_days
+    month_days = [v for k, v in data.items() if k != '_meta']
+    gpu_h = _sum(month_days, 'katago:gpu_seconds') / 3600
+    oneoff_h = _sum(month_days, 'oneoff:katago:gpu_seconds') / 3600
+    proj_h = oneoff_h + project(gpu_h - oneoff_h)
+    trusted = counted >= MIN_DAYS
+    meta = data.get('_meta', {})
+    actual = meta.get('actual') if meta.get('actual_at', 0) >= first.timestamp() else None
     cost, proj_cost = gpu_h * GPU_HOURLY, proj_h * GPU_HOURLY
+    if actual is not None:   # Modal's own figure, plus the estimate of what came after it
+        cost = actual + max(0.0, gpu_h - meta.get('actual_gpu_seconds', 0) / 3600) * GPU_HOURLY
+        proj_cost = cost + (proj_h - gpu_h) * GPU_HOURLY
     billable, proj_billable = max(0.0, cost - MODAL_FREE), max(0.0, proj_cost - MODAL_FREE)
     lines = [f'📊 Go Scan · tài nguyên {"hôm nay" if day.date() == now.date() else "ngày"} {day:%d/%m} '
-             f'(tháng {now:%m}: ngày {now.day}/{n_days})', '',
+             f'(tháng {now:%m}: ngày {now.day}/{n_days})'
+             + (f'\n   Số liệu tháng này đếm từ {since:%d/%m %H:%M}: dự kiến = đã dùng + cùng nhịp đó tới cuối tháng.'
+                if since > first + timedelta(hours=1) else ''), '',
              f'🧠 KataGo (Modal GPU L4): {gpu_h_day:.2f} giờ GPU · {int(d.get("katago:requests", 0))} lượt gọi · '
              f'{int(d.get("katago:visits", 0)):,} lượt tìm'.replace(',', '.'),
-             f'   Tháng này {gpu_h:.2f} giờ ≈ ${cost:.2f} → dự kiến cả tháng {proj_h:.1f} giờ ≈ ${proj_cost:.2f} '
-             f'(miễn phí ${MODAL_FREE:.0f}: {proj_cost / MODAL_FREE:.0%})' if MODAL_FREE else '']
+             (f'   Modal thật (nhập lúc {datetime.fromtimestamp(meta["actual_at"], VN):%d/%m %H:%M}): ${actual:.2f} '
+              f'+ ước tính sau đó → tháng này ≈ ${cost:.2f}, còn ≈ ${max(0.0, MODAL_FREE - cost):.2f} credit\n'
+              if actual is not None else '')
+             + f'   Đếm được tháng này {gpu_h:.2f} giờ'
+             + ('' if actual is not None else f' ≈ ${cost:.2f}')
+             + (f' (gồm {oneoff_h:.2f} giờ chạy một lần: dựng cây định thức…)' if oneoff_h else '')
+             + f' → dự kiến cả tháng ≈ ${proj_cost:.2f}'
+             + (f' (miễn phí ${MODAL_FREE:.0f}: {proj_cost / MODAL_FREE:.0%})' if MODAL_FREE else '')
+             + ('' if trusted else f' · mới đếm {counted:.1f} ngày, dự kiến chưa tin cậy')]
     week = [data.get((now - timedelta(days=k)).strftime('%Y-%m-%d'), {}).get('katago:gpu_seconds', 0) for k in range(1, 8)]
     before = [days((now - timedelta(days=k)).strftime('%Y-%m')).get((now - timedelta(days=k)).strftime('%Y-%m-%d'), {})
               .get('katago:gpu_seconds', 0) for k in range(8, 15)]
@@ -142,13 +212,16 @@ def report(now=None, day=None):
         alerts.append(f'📈 Giờ GPU 7 ngày qua tăng {sum(week) / sum(before) - 1:.0%} so với 7 ngày trước: theo đà này '
                       f'cả tháng ≈ ${sum(week) / 7 * n_days / 3600 * GPU_HOURLY:.2f}.')
     if billable > BUDGET:
-        alerts.append(f'🚨 Đã vượt ngân sách: Modal tháng này ≈ ${cost:.2f}, quá phần miễn phí ${MODAL_FREE:.0f} '
-                      f'→ phải trả ≈ ${billable:.2f} (ngân sách ${BUDGET:.0f}).')
-    elif proj_billable > BUDGET:
-        alerts.append(f'⚠️ Sắp vượt ngân sách: Modal dự kiến ≈ ${proj_cost:.2f} cả tháng, quá phần miễn phí '
-                      f'${MODAL_FREE:.0f} → phải trả ≈ ${proj_billable:.2f}. Giảm lượt tìm KataGo (ROOT_VISITS, hạn '
-                      f'mức USER_DAILY_KATAGO_VISITS) hoặc chuyển KataGo về CPU của VM.')
-    elif MODAL_FREE and proj_cost >= 0.8 * MODAL_FREE:
+        alerts.append(f'🚨 Hết credit Modal: tháng này ≈ ${cost:.2f}, quá ${MODAL_FREE:.0f} miễn phí. Với spend limit $0, '
+                      f'KataGo đã hoặc sắp bị Modal dừng tới hết tháng (ngân sách ${BUDGET:.0f}).')
+    elif proj_billable > BUDGET and trusted:
+        rate = (proj_cost - cost) / left if left else 0
+        out_day = now + timedelta(days=(MODAL_FREE - cost) / rate) if rate > 0 and cost < MODAL_FREE else None
+        alerts.append(f'⚠️ Sắp hết credit Modal: dự kiến ≈ ${proj_cost:.2f} cả tháng, quá ${MODAL_FREE:.0f} miễn phí'
+                      + (f', hết khoảng ngày {out_day:%d/%m}' if out_day else '')
+                      + '. Với spend limit $0, Modal sẽ dừng KataGo tới hết tháng (gợi ý, review, đấu AI ngừng chạy). '
+                      'Giảm lượt tìm (ROOT_VISITS, USER_DAILY_KATAGO_VISITS) hoặc chuyển KataGo về CPU của VM.')
+    elif MODAL_FREE and proj_cost >= 0.8 * MODAL_FREE and trusted:
         alerts.append(f'⚠️ Modal dự kiến dùng {proj_cost / MODAL_FREE:.0%} phần miễn phí tháng này.')
 
     # LLMs and speech
@@ -192,7 +265,7 @@ def report(now=None, day=None):
 
     total = billable
     lines += ['', f'💵 Chi phí tháng {now:%m}: hiện ≈ ${total:.2f} · dự kiến ≈ ${proj_billable:.2f} '
-              f'(ngân sách ${BUDGET:.0f}) {"✅" if proj_billable <= BUDGET else "❌"}']
+              f'(ngân sách ${BUDGET:.0f}) {"✅" if proj_billable <= BUDGET else "❌" if trusted else "❔ chưa đủ dữ liệu"}']
     if alerts:
         lines += ['', *alerts]
     return '\n'.join(x for x in lines if x is not None), alerts
@@ -226,13 +299,16 @@ def _mark(key):
 
 
 def start(send, hour=8):
-    """Background: write the counters every minute; from `hour` (Vietnam time) send yesterday's report once a day;
-    every hour send each new budget alert as soon as it appears (once a day each)."""
+    """Background: write the counters every minute; with `send`, from `hour` (Vietnam time) send yesterday's report
+    once a day, and every hour each new budget alert as soon as it appears (once a day each)."""
     def loop():
         checked = None
         while True:
             time.sleep(60)
             now = _day()
+            if send is None:
+                flush()
+                continue
             try:
                 if now.hour >= hour and _mark('report'):
                     send(report(now, now - timedelta(days=1))[0])

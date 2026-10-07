@@ -149,8 +149,14 @@ def main():
     ap.add_argument('--nodes', type=int, default=2500)
     ap.add_argument('--visits', type=int, default=500)
     args = ap.parse_args()
+    import usage
+    usage.SOURCE = 'joseki'   # its Modal GPU time goes into the admins' report (usage.py)
+    usage.start(None)
     from app import _katago
-    tree = build(_katago, args.nodes, args.visits, log=lambda s: print(s, file=sys.stderr, flush=True))
+    try:
+        tree = build(_katago, args.nodes, args.visits, log=lambda s: print(s, file=sys.stderr, flush=True))
+    finally:
+        usage.flush()
     PATH.parent.mkdir(parents=True, exist_ok=True)
     PATH.write_text(json.dumps(tree, separators=(',', ':')))
     print(f'{len(tree["nodes"])} positions -> {PATH}')

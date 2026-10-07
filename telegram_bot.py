@@ -49,6 +49,7 @@ HELP = """Lệnh cho admin Go Scan:
 /unreply <id> – gỡ câu trả lời
 /autoreply [on|off] – bật / tắt tự trả lời góp ý mới
 /usage – tài nguyên đã dùng, chi phí dự kiến tháng này (báo tự động 8 giờ sáng)
+/modal <số tiền> – nhập chi phí Modal thật của tháng (Usage & billing → Total Usage), ví dụ /modal 16.16
 Hoặc nhắn câu hỏi bất kỳ, ví dụ "người dùng phàn nàn gì nhiều nhất?"."""
 
 SUMMARY_PROMPT = """Bạn là trợ lý phân tích góp ý người dùng cho Go Scan, ứng dụng nhận dạng bàn cờ vây từ ảnh, \
@@ -224,6 +225,13 @@ def handle(chat_id, text):
         return f'Đã {"ẩn" if cmd == "/hide" else "hiện lại"} góp ý #{r["id"][:8]} trên trang public.'
     if cmd == '/usage':
         return usage.report()[0]
+    if cmd == '/modal':
+        try:
+            usd = float(arg.replace('$', '').replace(',', '.'))
+        except ValueError:
+            return 'Gõ số tiền Modal đã dùng tháng này (Usage & billing → Total Usage), ví dụ: /modal 16.16'
+        usage.set_actual(usd)
+        return f'Đã lưu: Modal tháng này ${usd:.2f}. Báo cáo tính từ số này.\n\n' + usage.report()[0]
     if cmd == '/autoreply':
         if arg.lower() in ('on', 'off'):
             feedback.set_auto_reply(arg.lower() == 'on')
@@ -293,6 +301,7 @@ def set_webhook(url):
         {'command': 'summary', 'description': 'AI tổng hợp góp ý'},
         {'command': 'autoreply', 'description': 'Bật / tắt tự trả lời góp ý'},
         {'command': 'usage', 'description': 'Tài nguyên và chi phí tháng này'},
+        {'command': 'modal', 'description': 'Nhập chi phí Modal thật (từ dashboard)'},
         {'command': 'help', 'description': 'Các lệnh'},
     ]}))
 

@@ -53,7 +53,13 @@ quy ra đô la so với phần miễn phí hằng tháng của Modal, lượt g�
 nói, giờ OCPU / RAM của VM Oracle so với mức Always Free, ổ đĩa, số người dùng. Chi phí cả tháng (theo dương lịch) được
 dự kiến theo nhịp đã dùng; ngân sách mặc định là 0 (chỉ dùng gói miễn phí). Bot cảnh báo ngay (mỗi cảnh báo một lần
 một ngày) khi đã hoặc sắp vượt ngân sách, khi Modal dự kiến dùng quá 80 % phần miễn phí, khi giờ GPU 7 ngày qua tăng
-mạnh, khi nhiều lần hết lượt AI miễn phí hoặc ổ đĩa quá 80 %. Số liệu ở `/srv/go-scan/usage/<YYYY-MM>.json`.
+mạnh, khi nhiều lần hết lượt AI miễn phí hoặc ổ đĩa quá 80 %. Số liệu ở `/srv/go-scan/usage/<YYYY-MM>.json` (các tiến
+trình khác như `python -m joseki build` ghi `<YYYY-MM>.<tên>.json`, được cộng vào nhưng không nhân lên khi dự kiến).
+
+Giờ GPU do app tự đo chỉ là ước tính: thỉnh thoảng nhập số thật từ dashboard Modal (Usage & billing → Total Usage)
+bằng lệnh bot `/modal 16.16`; báo cáo lấy số đó làm mốc rồi cộng phần ước tính sau đó. Workspace Modal đặt spend limit
+$0: hết $30 credit là Modal dừng mọi workload, KataGo ngừng tới hết tháng — các cảnh báo báo trước ngày hết credit.
+Dự kiến chỉ được tin (và mới cảnh báo) sau 2 ngày đếm.
 Tham số: `USAGE_BUDGET_USD`, `MODAL_FREE_CREDIT_USD` (30), `MODAL_GPU_USD_PER_HOUR` (0,80), `ORACLE_FREE_OCPU_HOURS`
 (1500), `ORACLE_FREE_GB_HOURS` (9000).
 
