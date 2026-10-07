@@ -114,7 +114,7 @@ def _sum(day_list, prefix):
 
 def report(now=None, day=None):
     """-> (text for the admins, alerts). day: the day reported in detail (default: today so far)."""
-    now = _day(now)
+    now = now if isinstance(now, datetime) else _day(now)   # a datetime, or a timestamp (None: now)
     day = day or now
     month = now.strftime('%Y-%m')
     data = days(month)

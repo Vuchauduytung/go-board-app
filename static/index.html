@@ -173,6 +173,17 @@
   .vsbar .acts button { flex: 1; min-width: 70px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
                         border-radius: 9px; padding: 8px 6px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .vsbar .acts button:disabled { opacity: .4; cursor: default; }
+  #jBoard { width: 100%; height: auto; display: block; border-radius: 6px; touch-action: manipulation; }
+  #jBoard [data-j] { cursor: pointer; }
+  ol.jnext { list-style: none; margin: 10px 0 0; padding: 0; }
+  ol.jnext li { display: flex; gap: 8px; align-items: center; padding: 7px 4px; border-top: 1px solid var(--line); font-size: 14px; cursor: pointer; border-radius: 8px; }
+  ol.jnext li:first-child { border-top: 0; }
+  ol.jnext li.tenuki { cursor: default; color: var(--muted); }
+  ol.jnext .jl { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; flex: none; }
+  .jdot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; }
+  .best { background: #2f7d4f; } .good { background: #8a8f2a; } .ok { background: #d08a1e; }
+  #jSeq { margin-top: 8px; font-size: 13px; }
+  #jMain { letter-spacing: normal; font-size: 14px; }
   .nav { display: flex; gap: 6px; }
   .nav button { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
                 padding: 11px 0; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: -2px; }
@@ -220,6 +231,7 @@
   </header>
   <nav class="tabs" id="tabs">
     <button type="button" data-tab="scan" class="on">📷 Nhận dạng</button>
+    <button type="button" data-tab="joseki">📘 Định thức</button>
     <button type="button" data-tab="reviews">⭐ Đánh giá</button>
   </nav>
   <div id="tab-scan">
@@ -402,6 +414,28 @@
     <h2>⭐ Ván đã lưu <span class="muted" id="pinnedCount"></span></h2>
     <ul class="hist" id="pinned"><li class="muted">Bấm ☆ cạnh tên ván để giữ lại lâu dài</li></ul>
   </section>
+  </div>
+
+  <div id="tab-joseki" hidden>
+    <section class="card">
+      <div class="boardhead"><h2>📘 Định thức theo KataGo</h2><span class="muted" id="jInfo"></span></div>
+      <p class="muted" style="margin:0 0 8px">Góc trên-phải của bàn trống, komi 7.5, KataGo tự đánh giá từng nước. Chạm chữ cái
+        để đi tiếp: <span class="jdot best"></span> tốt nhất · <span class="jdot good"></span> tốt · <span class="jdot ok"></span> chơi được.</p>
+      <svg id="jBoard" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="nav field">
+        <button type="button" id="jFirst" title="Về đầu">⏮</button>
+        <button type="button" id="jBack" title="Lùi 1 nước">◀</button>
+        <button type="button" id="jMain" title="Đi theo nhánh chính tới hết">▶ Nhánh chính</button>
+      </div>
+      <div class="mode field" id="jStatus"></div>
+      <ol class="jnext" id="jNext"></ol>
+      <div class="muted" id="jSeq"></div>
+      <div class="row">
+        <button class="btn secondary field" type="button" id="jToBoard">▶ Mở trên bàn chính</button>
+        <button class="btn accent field" type="button" id="jAsk">💬 Hỏi trợ lý</button>
+      </div>
+      <div class="chatlog field" id="jLog"></div>
+    </section>
   </div>
 
   <div id="tab-reviews" hidden>
@@ -1678,6 +1712,131 @@ $('vsScore').addEventListener('click', e => {
 $('vsLand').addEventListener('click', showEstimate);
 $('vsCount').addEventListener('click', () => { if (play && !play.over && confirm('Kết thúc ván và đếm đất?')) countScore(); });
 
+// ---- 📘 joseki: KataGo's tree of the top-right corner (joseki.py), browsed move by move ----
+let jTree = null, jPath = [];
+const J_FROM = 8, J_SIZE = 11;   // the corner shown: columns J–T, rows 19–9
+const J_START = { Q16: '4-4 · sao (hoshi)', R16: '3-4 · tiểu mục (komoku)', R17: '3-3 · tam tam (san-san)',
+                  Q15: '4-5 · cao mục (takamoku)', R15: '3-5 · mục ngoại (mokuhazushi)' };
+const J_RATING = { best: 'tốt nhất', good: 'tốt', ok: 'chơi được' };
+const J_COLOR = { best: '#2f7d4f', good: '#8a8f2a', ok: '#d08a1e' };
+const jWho = i => i % 2 ? 'W' : 'B';
+
+async function loadJoseki() {
+  if (!jTree) {
+    $('jStatus').innerHTML = '<span class="spinner"></span>Đang tải cây định thức…';
+    try { jTree = await apiJson('api/joseki'); }
+    catch (e) { $('jStatus').textContent = 'Chưa có cây định thức: ' + e.message; return; }
+    $('jInfo').textContent = `${Object.keys(jTree.nodes).length} thế cờ · ${jTree.built_at}`;
+  }
+  renderJoseki();
+}
+// The branches from the position on screen: the corner points to start from, else the tree's
+function jNode() {
+  if (!jPath.length) return { next: jTree.starts.map(m => ({ move: m, rating: 'best', loss: 0, searched: !!jTree.nodes[m] })) };
+  return jTree.nodes[jPath.join(' ')] || { next: [], unsearched: true };
+}
+function jBoardAfter(path) {   // stones after the moves, captures included
+  const saved = koBoard;
+  koBoard = null;
+  try {
+    let m = Array.from({ length: 19 }, () => Array(19).fill(0));
+    for (const [i, mv] of path.entries()) {
+      const [r, c] = [19 - parseInt(mv.slice(1), 10), COLS.indexOf(mv[0])], next = playMove(m, r, c, jWho(i) === 'B' ? 1 : 2);
+      if (typeof next !== 'string') m = next;
+    }
+    return m;
+  } finally { koBoard = saved; }
+}
+function renderJoseki() {
+  const node = jNode(), board = jBoardAfter(jPath), s = 30, mg = 30, W = mg * 2 + s * (J_SIZE - 1);
+  const X = c => mg + (c - J_FROM) * s, Y = r => mg + r * s;
+  let h = `<rect width="${W}" height="${W}" fill="var(--wood)"/>`;
+  for (let i = 0; i < J_SIZE; i++) {   // the corner's two edges are the board's; the other two go on
+    h += `<line x1="${mg - 18}" y1="${Y(i)}" x2="${X(18)}" y2="${Y(i)}" stroke="var(--wood-line)" stroke-width="${i ? 1 : 2}"/>`;
+    h += `<line x1="${X(J_FROM + i)}" y1="${Y(0)}" x2="${X(J_FROM + i)}" y2="${W - mg + 18}" stroke="var(--wood-line)" stroke-width="${i === J_SIZE - 1 ? 2 : 1}"/>`;
+    h += `<text x="${X(J_FROM + i)}" y="${mg - 14}" font-size="10" text-anchor="middle" fill="var(--wood-line)">${COLS[J_FROM + i]}</text>`;
+    h += `<text x="${W - 10}" y="${Y(i) + 3.5}" font-size="10" text-anchor="middle" fill="var(--wood-line)">${19 - i}</text>`;
+  }
+  for (const [r, c] of [[3, 15], [9, 15], [3, 9], [9, 9]]) h += `<circle cx="${X(c)}" cy="${Y(r)}" r="3" fill="var(--wood-line)"/>`;
+  const num = new Map();
+  jPath.forEach((mv, i) => num.set(mv, i + 1));
+  board.forEach((row, r) => row.forEach((v, c) => {
+    if (!v || c < J_FROM || r >= J_SIZE) return;
+    h += `<circle cx="${X(c)}" cy="${Y(r)}" r="13.5" fill="${v === 1 ? '#141414' : '#fafafa'}" stroke="#333" stroke-width=".8"/>`;
+    const n = num.get(COLS[c] + (19 - r));
+    if (n) h += `<text x="${X(c)}" y="${Y(r) + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${v === 1 ? '#fff' : '#141414'}">${n}</text>`;
+  }));
+  if (jPath.length) {
+    const [r, c] = [19 - parseInt(jPath.at(-1).slice(1), 10), COLS.indexOf(jPath.at(-1)[0])];
+    h += `<circle cx="${X(c)}" cy="${Y(r)}" r="16" fill="none" stroke="var(--accent)" stroke-width="2.5"/>`;
+  }
+  node.next.forEach((k, i) => {
+    const [r, c] = [19 - parseInt(k.move.slice(1), 10), COLS.indexOf(k.move[0])];
+    h += `<g data-j="${i}"><circle cx="${X(c)}" cy="${Y(r)}" r="13" fill="${J_COLOR[k.rating]}" opacity=".9"/>
+      <text x="${X(c)}" y="${Y(r) + 4.5}" font-size="13" font-weight="700" text-anchor="middle" fill="#fff">${'ABCDEFGH'[i]}</text></g>`;
+  });
+  $('jBoard').setAttribute('viewBox', `0 0 ${W} ${W}`);
+  $('jBoard').innerHTML = h;
+  const who = NAME[jWho(jPath.length)];
+  $('jStatus').innerHTML = !jPath.length ? 'Chọn điểm Đen mở góc.'
+    : node.unsearched ? 'KataGo chưa tính sâu tới đây (ngoài phần cây đã dựng).'
+    : node.settled ? `<b>Định thức kết thúc</b>: ${who} nên đi chỗ khác (tenuki), mọi nước ở góc đều kém hơn.`
+    : `Nước ${jPath.length + 1}: tới lượt <b>${who}</b> · ${NAME[node.score_lead >= 0 ? jWho(jPath.length) : jWho(jPath.length + 1)]} hơn ${Math.abs(node.score_lead).toFixed(1)} điểm (cả komi)`;
+  let rows = node.next.map((k, i) => `<li data-j="${i}"><span class="jl" style="background:${J_COLOR[k.rating]}">${'ABCDEFGH'[i]}</span>
+      <b>${k.move}</b> ${jPath.length ? J_RATING[k.rating] : J_START[k.move] || ''}
+      ${jPath.length ? `<span class="muted">· mất ${Math.max(0, k.loss).toFixed(1)} điểm so với nước tốt nhất toàn bàn${k.searched === false ? ' · chưa tính tiếp' : ''}</span>` : ''}</li>`).join('');
+  if (jPath.length && node.tenuki != null) rows += `<li class="tenuki"><span class="jl" style="background:#7a6f62">↗</span>Tenuki (đi chỗ khác)
+      <span class="muted">· ${node.tenuki <= 0.05 ? 'tốt nhất toàn bàn' : `mất ${node.tenuki.toFixed(1)} điểm`}</span></li>`;
+  $('jNext').innerHTML = rows;
+  $('jSeq').textContent = jPath.length ? jPath.map((m, i) => `${i + 1}.${jWho(i) === 'B' ? '⚫' : '⚪'}${m}`).join(' ') : '';
+  $('jBack').disabled = $('jFirst').disabled = !jPath.length;
+  $('jMain').disabled = !node.next.length;
+  $('jToBoard').disabled = $('jAsk').disabled = !jPath.length;
+}
+function jGo(i) {
+  const k = jNode().next[i];
+  if (!k) return;
+  jPath.push(k.move);
+  renderJoseki();
+}
+$('jBoard').addEventListener('click', e => { const g = e.target.closest('[data-j]'); if (g) jGo(+g.dataset.j); });
+$('jNext').addEventListener('click', e => { const li = e.target.closest('li[data-j]'); if (li) jGo(+li.dataset.j); });
+$('jBack').addEventListener('click', () => { jPath.pop(); renderJoseki(); });
+$('jFirst').addEventListener('click', () => { jPath = []; renderJoseki(); });
+$('jMain').addEventListener('click', () => {   // the best branch, until the joseki ends or the tree does
+  for (let n = 0; n < 40; n++) {
+    const k = jNode().next[0];
+    if (!k || (jPath.length && jNode().settled)) break;
+    jPath.push(k.move);
+  }
+  renderJoseki();
+});
+$('jToBoard').addEventListener('click', () => {
+  if (inGame() && !confirm('Đang đấu với AI: mở định thức sẽ rời ván đấu (ván vẫn được lưu). Tiếp tục?')) return;
+  for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.tab === 'scan');
+  $('tab-scan').hidden = false; $('tab-joseki').hidden = true;
+  $('size').value = '19';
+  emptyBoard(19);
+  const res = applyActions([{ type: 'play', moves: jPath.map((m, i) => ({ color: jWho(i), point: m })) }]);
+  setStatus(res.error ? 'err' : 'ok', res.error ? esc(res.error) : `Định thức ${jPath.length} nước đã đặt lên bàn: đi tiếp, hỏi trợ lý hoặc bấm 💡 Gợi ý.`);
+  $('resultCard').scrollIntoView({ behavior: 'smooth' });
+});
+$('jLog').addEventListener('click', e => {
+  const retry = e.target.closest('[data-retry]');
+  if (!retry) return;
+  const msg = retry.closest('.msg'), { q, body } = msg._retry;
+  msg.previousElementSibling?.remove(); msg.remove();
+  chatRequest(q, { log: $('jLog'), btn: $('jAsk'), body });
+});
+$('jAsk').addEventListener('click', () => {
+  const node = jNode(), seq = jPath.map((m, i) => `${NAME[jWho(i)]} ${m}`).join(', ');
+  const next = node.next.map(k => `${k.move} (${J_RATING[k.rating]})`).join(', ');
+  const q = `Giải thích định thức ở góc trên-phải (bàn trống, theo đánh giá của KataGo): ${seq}. Ý nghĩa từng nước, ` +
+    (node.settled ? 'vì sao định thức kết thúc ở đây và kết quả hai bên thế nào.' :
+     `các lựa chọn tiếp theo cho ${NAME[jWho(jPath.length)]}: ${next || 'không còn'}${node.tenuki != null ? ', hoặc tenuki' : ''} — khác nhau thế nào và nên chọn khi nào.`);
+  chatRequest(q, { log: $('jLog'), btn: $('jAsk'), body: {}, waitText: 'Đang tra sách và tài liệu định thức…' });
+});
+
 // ---- signed-in user and today's usage ----
 function showMe(m) {
   if (!m) return;
@@ -1700,8 +1859,10 @@ $('tabs').addEventListener('click', e => {
   if (!t) return;
   for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.tab === t);
   $('tab-scan').hidden = t !== 'scan';
+  $('tab-joseki').hidden = t !== 'joseki';
   $('tab-reviews').hidden = t !== 'reviews';
   if (t === 'reviews') loadReviews();
+  if (t === 'joseki') loadJoseki();
 });
 
 // ---- chat ----
@@ -1796,15 +1957,17 @@ function renderAnswer(el, j, board) {
   shown.forEach(s => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'src';
-    b.textContent = `[${s.n}] ${s.title} · ${s.page_kind === 'page' ? 'tr. ' + s.page : s.chapter}`;
-    if (s.image) b.onclick = () => openPage(s, s.page); else b.disabled = true;
+    b.textContent = `[${s.n}] ${s.title} · ${s.page_kind === 'page' ? 'tr. ' + s.page : s.page_kind === 'web' ? '🔗 web' : s.chapter}`;
+    if (s.url) b.onclick = () => window.open(s.url, '_blank', 'noopener');
+    else if (s.image) b.onclick = () => openPage(s, s.page); else b.disabled = true;
     box.appendChild(b);
   });
   el.appendChild(box);
   el.querySelectorAll('[data-cite]').forEach(a => a.onclick = ev => {
     ev.preventDefault();
     const s = j.sources[+a.dataset.cite - 1];
-    if (s.image) openPage(s, s.page);
+    if (s.url) window.open(s.url, '_blank', 'noopener');
+    else if (s.image) openPage(s, s.page);
   });
 }
 

@@ -16,6 +16,7 @@
 #   POST /api/tts         a piece of an answer -> MP3 read in Vietnamese (tts.py)
 #   POST /api/play        the AI's move at a level from 5k to 5d (bot.py)
 #   POST /api/score       counting a finished game: dead stones, territory, result (score.py)
+#   GET  /api/joseki      KataGo's joseki tree for the 📘 Định thức tab (joseki.py)
 # Resource use is counted (usage.py) and reported to the admins on Telegram every morning.
 #   POST /telegram/webhook  admin bot (telegram_bot.py), when the proxy lets Telegram reach it (Oracle VM)
 #   GET  /api/books/{id}/pages/{n}  page image cited by the assistant
@@ -908,6 +909,15 @@ def best_line(body: BestLineIn, user: str = Depends(current_user)):
     except KataGoError as ex:
         raise HTTPException(ex.status, str(ex))
     return {'moves': more}
+
+
+@app.get('/api/joseki')
+def joseki_tree(user: str = Depends(current_user)):
+    import joseki
+    f = joseki.load()
+    if f is None:
+        raise HTTPException(404, 'Chưa có cây định thức (python -m joseki build trên máy chủ)')
+    return FileResponse(f, media_type='application/json', headers={'Cache-Control': 'private, max-age=3600'})
 
 
 @app.get('/api/books/{book_id}/pages/{page}')

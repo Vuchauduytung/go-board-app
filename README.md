@@ -34,6 +34,13 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   đánh, mọi thế cờ được KataGo tìm với đúng thông số của review (lượt AI khi chọn nước, lượt người chơi chạy ngầm
   với `think: true`, không hiện ra), nên hết ván bấm **📋 Review ván này** (`POST /api/sessions/{id}/play/review`)
   là review gần như ngay, lấy từ cache của ván.
+- Định thức (tab 📘, `joseki.py`): cây định thức góc trên-phải do chính KataGo dựng (bàn trống, komi 7.5, mỗi thế
+  cờ 500 lượt tìm trên cả bàn; nước ở góc là nhánh, nước tốt nhất ở chỗ khác là tenuki; giữ nước tốt nhất ở góc và
+  các nước kém nó ≤ 1,5 điểm, tối đa 4, xếp loại tốt nhất / tốt / chơi được; hết định thức khi tenuki hơn hẳn).
+  Dựng một lần trên máy chủ: `docker compose … exec app python -m joseki build` (ghi `/data/joseki/tree.json`, bản đã
+  dựng được kèm trong `josekidb/`). Xem từng nước, đi theo nhánh chính, hỏi trợ lý, mở trên bàn chính.
+- Tài liệu định thức trên web (`rag/web_sources.py`, `python -m rag.ingest_web`): các bài phân tích định thức bằng
+  KataGo, Wikipedia, DeepMind, diễn đàn OGS… được index cùng sách; trợ lý trích dẫn kèm link gốc.
 - Góp ý (tab ⭐): AI tự trả lời công khai, admin trả lời tay trên web hoặc qua bot Telegram (`telegram_bot.py`).
 - Review ván từ file SGF: KataGo xem mọi thế cờ của ván, liệt kê 10 lỗi mất nhiều điểm nhất của mỗi bên, mỗi lỗi kèm biến
   tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi). Chạm số trên biến (hoặc ▶) để đi tiếp
@@ -80,6 +87,7 @@ Mở `http://<IP máy chủ>:8765` trên điện thoại (cùng Wi-Fi).
 | POST | `/api/sessions/{id}/pin` | `{pinned}`; 409 khi đã đủ số ván ghim |
 | POST | `/api/chat/reset` | xoá lịch sử hội thoại |
 | GET | `/api/books/{id}/pages/{n}` | ảnh trang sách được trích dẫn |
+| GET | `/api/joseki` | cây định thức của KataGo `{starts, nodes: {"Q16 R17 …": {winrate, score_lead, tenuki, settled, next: [{move, loss, rating}]}}}` |
 | POST | `/api/stt` | form `file` (ghi âm ≤ 3 MB) → `{text}` (giọng nói tiếng Việt → chữ) |
 | POST | `/api/tts` | JSON `{text}` (≤ 600 ký tự) → MP3 đọc tiếng Việt |
 | GET / POST | `/api/feedback` | góp ý công khai (kèm `reply`) / gửi góp ý (form `rating`, `text`, `anonymous`, `images`) |

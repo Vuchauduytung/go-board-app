@@ -52,3 +52,11 @@ def test_quiet_month_is_free_and_counters_are_written(monkeypatch):
     saved = json.loads((usage.ROOT / '2026-10.json').read_text())
     assert saved['2026-10-03']['llm_429:gemini'] == 1
     assert usage._mark('report') and not usage._mark('report')   # the morning report goes once a day
+
+
+def test_report_takes_the_loop_s_datetimes():
+    """The morning loop passes datetimes (a timestamp-only report crashed it: no report was ever sent)."""
+    now = datetime(2026, 10, 7, 8, 1, tzinfo=usage.VN)
+    usage.add('katago:gpu_seconds', 600, t=ts(6))
+    text, _ = usage.report(now, now - __import__('datetime').timedelta(days=1))
+    assert 'ngày 06/10' in text and '0.17 giờ GPU' in text

@@ -18,10 +18,11 @@ class Chunk:
     book_id: str
     title: str
     page: int          # PDF page (1-based) or EPUB chapter number
-    page_kind: str     # 'page' | 'chapter'
+    page_kind: str     # 'page' | 'chapter' | 'web'
     chapter: str
     text: str
     score: float
+    url: str = ''      # a web page's link (rag.ingest_web)
 
 
 @lru_cache(maxsize=1)
@@ -57,14 +58,15 @@ def search(queries, top_k=TOP_K, min_score=MIN_SCORE):
             if p.id not in chunks or chunks[p.id].score < p.score:
                 chunks[p.id] = Chunk(book_id=p.payload['book_id'], title=p.payload['title'], page=int(p.payload['page']),
                                      page_kind=p.payload['page_kind'], chapter=p.payload.get('chapter', ''),
-                                     text=p.payload['text'], score=float(p.score))
+                                     text=p.payload['text'], score=float(p.score), url=p.payload.get('url', ''))
     return [chunks[i] for i in sorted(fused, key=fused.get, reverse=True)[:top_k]]
 
 
 def format_context(chunks):
     blocks, used = [], 0
     for i, c in enumerate(chunks, 1):
-        where = f'trang {c.page}' if c.page_kind == 'page' else f'chương "{c.chapter}"'
+        where = (f'trang {c.page}' if c.page_kind == 'page' else f'bài viết trên web ({c.url})' if c.page_kind == 'web'
+                 else f'chương "{c.chapter}"')
         block = f'[{i}] {c.title} — {where}\n{c.text}'
         block = block[:max(0, CONTEXT_MAX_CHARS - used)]
         if not block:
