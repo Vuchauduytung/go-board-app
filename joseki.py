@@ -141,8 +141,9 @@ def build(katago, max_nodes=2500, visits=500, parallel=8, log=print):
 # plays its best move elsewhere (a real stone: a "tenuki" branch), then the other side answers in the corner or
 # tenukis too; two tenukis in a row: the corner is finished ("done"). Each line of the built tree goes on as one line
 # (the best move; no new branches inside the built tree either): the complete joseki first (lines that reached their
-# end), then the lines the build left unfinished, each class best-first. Meant for a slow CPU KataGo: one query at a
-# time, saved every few positions so the app shows the deeper tree as it grows. ----
+# end), then the lines the build left unfinished, each class best-first, and each line to its end before the next
+# (depth first), so finished lines show up early. Meant for a slow CPU KataGo: one query at a time, saved every few
+# positions so the app shows the deeper tree as it grows. ----
 DEEP_DEPTH = 50
 DEEP_WIDTH, DEEP_BRANCH, DEEP_SINGLE = 1, 0.5, 30
 
@@ -196,16 +197,16 @@ def deepen(katago, tree, max_depth=DEEP_DEPTH, visits=200, whole_visits=60, save
         if depth >= max_depth or node.get('done'):
             continue
         if node.get('settled') and not node.get('next'):            # a complete joseki: on with its tenuki
-            heap.append(((0, cost(key)), counter := counter + 1, key.split(), True))
+            heap.append(((0, cost(key), -len(key.split())), counter := counter + 1, key.split(), True))
         nxt = node.get('next', [])
         if nxt and not node.get('settled') and f'{key} {nxt[0]["move"]}' not in nodes:   # unfinished: its best move
-            heap.append(((1, cost(key) + 2 * nxt[0]['delta'] + 0.1), counter := counter + 1, key.split() + [nxt[0]['move']], False))
+            heap.append(((1, cost(key) + 2 * nxt[0]['delta'] + 0.1, -len(key.split()) - 1), counter := counter + 1, key.split() + [nxt[0]['move']], False))
         if nxt and node.get('settled') and nxt[0].get('tenuki') and f'{key} {nxt[0]["move"]}' not in nodes:   # resumed
-            heap.append(((0, cost(key) + 0.1), counter := counter + 1, key.split() + [nxt[0]['move']], False))
+            heap.append(((0, cost(key) + 0.1, -len(key.split()) - 1), counter := counter + 1, key.split() + [nxt[0]['move']], False))
     heapq.heapify(heap)
     done, start = 0, time.time()
     while heap and (stop is None or time.time() < stop):
-        (cls, c), _, moves, again = heapq.heappop(heap)
+        (cls, c, _), _, moves, again = heapq.heappop(heap)   # c: the line's own rank, kept by its moves
         key = ' '.join(moves)
         if key in nodes and not again:
             continue
@@ -215,7 +216,7 @@ def deepen(katago, tree, max_depth=DEEP_DEPTH, visits=200, whole_visits=60, save
                       'settled': settled, 'next': kids, **({'done': True} if finished else {})}
         if len(moves) < max_depth:
             for k in kids:
-                heapq.heappush(heap, ((cls, c + 2 * k['delta'] + 0.1), counter := counter + 1, moves + [k['move']], False))
+                heapq.heappush(heap, ((cls, c, -len(moves) - 1), counter := counter + 1, moves + [k['move']], False))
         done += 1
         if done % save_every == 0:
             _mark_searched(nodes)
