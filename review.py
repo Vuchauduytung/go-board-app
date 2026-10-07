@@ -197,7 +197,80 @@ def _finish(game, review):
                           'winrate_before': p[str(i)][0], 'winrate_after': round(1 - p[str(i + 1)][0], 4),
                           'best': d['best'], 'line': d['line']})
         review['mistakes'][who] = sorted(found, key=lambda m: -m['loss'])[:MISTAKES]
+    review['opening'] = opening_review(game, review)
     review.update(status='done', phase='done', finished_at=time.time())
+
+
+# ---- the opening against KataGo's joseki (joseki.py): a costly move in a corner during the first OPENING_MOVES gets
+# the joseki to play instead. The tree is the top-right corner of an empty board: each corner of the game is turned to
+# it (and tried across its diagonal too), its moves so far must follow one another there (no tenuki inside), and the
+# joseki is the tree's best move at that point, then its main line until the joseki ends. ----
+OPENING_MOVES = 40
+OPENING_LOSS = 1.0
+CORNERS = (('trên-phải', False, False), ('trên-trái', False, True), ('dưới-phải', True, False), ('dưới-trái', True, True))
+JOSEKI_LINE = 10
+
+
+def _turn(rc, flip_r, flip_c, n=19):
+    """A point of a corner to the top-right one (and back: each flip undoes itself)."""
+    return (n - 1 - rc[0] if flip_r else rc[0], n - 1 - rc[1] if flip_c else rc[1])
+
+
+def opening_review(game, review, nodes=None):
+    """[{number, color, move, loss, corner, joseki: [[color, move]…], ends (tenuki after it), played_rating}]"""
+    import joseki
+    if game['board_size'] != 19 or any(v for row in game['base'] for v in row):
+        return []
+    if nodes is None:
+        f = joseki.load()
+        if f is None:
+            return []
+        import json
+        nodes = json.loads(f.read_text())['nodes']
+    moves, out = game['moves'], []
+    for i, (who, mv) in enumerate(moves[:OPENING_MOVES]):
+        if mv == 'pass' or str(i) not in review['positions'] or str(i + 1) not in review['positions']:
+            continue
+        loss = _loss(review, i)
+        if loss < OPENING_LOSS:
+            continue
+        rc = coach.parse_point(mv, 19)
+        for name, fr, fc in CORNERS:
+            turn = lambda p: joseki.gtp(*_turn(coach.parse_point(p, 19), fr, fc))
+            if not joseki.local(turn(mv)):
+                continue
+            local = [(w, turn(m)) for w, m in moves[:i] if m != 'pass' and joseki.local(turn(m))]
+            if not local or local[-1][0] == who or any(a[0] == b[0] for a, b in zip(local, local[1:])):
+                continue   # the corner's first move, or a tenuki inside it: nothing to match
+            for diag in (False, True):
+                seq = [joseki.mirror(m) if diag else m for _, m in local]
+                node = nodes.get(' '.join(seq))
+                if node:
+                    break
+            else:
+                continue
+            played = joseki.mirror(turn(mv)) if diag else turn(mv)
+            back = lambda m: coach.gtp(*_turn(joseki.rc(joseki.mirror(m) if diag else m), fr, fc), 19)
+            kids = [k for k in node.get('next', []) if not k.get('tenuki')]
+            mine = next((k for k in kids if k['move'] == played), None)
+            if kids and kids[0]['move'] == played:
+                break   # the joseki's own move: costly for the whole board, not for the corner
+            line, key = [], ' '.join(seq)
+            for _ in range(JOSEKI_LINE):
+                n = nodes.get(key)
+                nxt = [k for k in (n or {}).get('next', []) if not k.get('tenuki')]
+                if not n or not nxt or (n.get('settled') and line):
+                    break
+                line.append(nxt[0]['move'])
+                key += ' ' + nxt[0]['move']
+            ends = bool(nodes.get(key, {}).get('settled'))
+            colors = [who if k % 2 == 0 else coach.OTHER[who] for k in range(len(line))]
+            out.append({'number': i + 1, 'color': who, 'move': mv, 'loss': round(loss, 1), 'corner': name,
+                        'joseki': [[c, back(m)] for c, m in zip(colors, line)], 'ends': ends,
+                        'tenuki': bool(node.get('settled')) and not line,
+                        'played_rating': mine and mine['rating']})
+            break
+    return out
 
 
 def step(game, review, katago, seconds=STEP_SECONDS, peek=None):
@@ -229,5 +302,5 @@ def progress(review):
     if not review:
         return None
     deep_total = sum(len(v) for v in review.get('candidates', {}).values())
-    return {k: review.get(k) for k in ('status', 'phase', 'total', 'done', 'mistakes')} | \
+    return {k: review.get(k) for k in ('status', 'phase', 'total', 'done', 'mistakes', 'opening')} | \
         {'deep_done': len(review.get('deep', {})), 'deep_total': deep_total}

@@ -318,6 +318,28 @@
         <button type="button" id="vsReview" hidden>📋 Review ván này</button>
       </div>
     </div>
+    <div class="review" style="margin:0 0 12px;border-top:0;padding-top:0" id="reviewBox" hidden>
+      <h2>📋 Review ván</h2>
+      <div class="muted" id="reviewInfo"></div>
+      <div class="progress" id="reviewProgress" hidden><i></i></div>
+      <button class="btn accent field" type="button" id="reviewRun" hidden>▶ Review ván này</button>
+      <div class="turn" id="reviewSides" hidden>
+        <div class="seg" id="reviewSide">
+          <button type="button" data-side="all" class="on">Cả hai</button>
+          <button type="button" data-side="B">⚫ Đen</button>
+          <button type="button" data-side="W">⚪ Trắng</button>
+        </div>
+        <button class="src" type="button" id="gameEnd">⏭ Về cuối ván gốc</button>
+      </div>
+      <ol class="mistakes" id="mistakes"></ol>
+      <div id="openingBox" hidden>
+        <h2 style="margin-top:12px">📘 Khai cuộc: định thức nên đi</h2>
+        <div class="muted" style="font-size:13px">Nước sai ở góc trong 40 nước đầu, so với cây định thức của KataGo (góc trống,
+          chưa tính quân ở chỗ khác). Chạm để xem thế cờ trước nó, định thức hiện số 1, 2, 3… viền xanh.</div>
+        <ol class="mistakes" id="opening"></ol>
+      </div>
+    </div>
+
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="vars" id="varsBox" hidden>
       <h3><span>🔀 Biến thể trong ván này <span class="muted" id="varCount"></span></span>
@@ -365,21 +387,6 @@
         <div class="lbl"><span id="wrB"></span><span id="wrW"></span></div>
       </div>
       <ol class="moves" id="moves"></ol>
-    </div>
-
-    <div class="review" id="reviewBox" hidden>
-      <h2>📋 Review ván</h2>
-      <div class="muted" id="reviewInfo"></div>
-      <div class="progress" id="reviewProgress" hidden><i></i></div>
-      <button class="btn accent field" type="button" id="reviewRun" hidden>▶ Review ván này</button>
-      <div class="turn" id="reviewSides" hidden>
-        <div class="seg" id="reviewSide">
-          <button type="button" data-side="B" class="on">⚫ 10 lỗi của Đen</button>
-          <button type="button" data-side="W">⚪ 10 lỗi của Trắng</button>
-        </div>
-        <button class="src" type="button" id="gameEnd">⏭ Về cuối ván gốc</button>
-      </div>
-      <ol class="mistakes" id="mistakes"></ol>
     </div>
 
     <div class="coach">
@@ -1242,7 +1249,13 @@ function gotoGameMove(k) {
 }
 $('gameEnd').addEventListener('click', () => { gotoGameMove(game.moves.length); setStatus('ok', 'Đã về cuối ván gốc.'); });
 
-let reviewData = null, reviewSide = 'B', reviewing = null;
+let reviewData = null, reviewSide = 'all', reviewing = null;
+// The mistakes shown: one side's or both, in the order they were played
+function shownMistakes() {
+  const m = reviewData?.mistakes;
+  if (!m) return [];
+  return (reviewSide === 'all' ? [...(m.B || []), ...(m.W || [])] : (m[reviewSide] || [])).slice().sort((a, b) => a.number - b.number);
+}
 function showReview(r) {
   if (r && r.deep_total === undefined) {   // the session's stored review: count the deep phase from its data
     r = { ...r, deep_done: Object.keys(r.deep || {}).length, deep_total: Object.values(r.candidates || {}).flat().length };
@@ -1264,14 +1277,38 @@ function showReview(r) {
   $('reviewRun').textContent = r && r.done ? '▶ Tiếp tục review' : '▶ Review ván này';
   $('reviewSides').hidden = r?.status !== 'done';
   for (const b of $('reviewSide').children) b.classList.toggle('on', b.dataset.side === reviewSide);
-  const list = r?.status === 'done' ? r.mistakes[reviewSide] : [];
+  const list = r?.status === 'done' ? shownMistakes() : [];
   $('mistakes').innerHTML = list.map((m, i) => `
     <li data-i="${i}">
-      <div><b>${i + 1}.</b> Nước ${m.number}: ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
+      <div><b>Nước ${m.number}</b>: ${m.color === 'B' ? '⚫' : '⚪'} ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
         · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${m.best || '—'}</b></div>
       <div class="line">Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');
+  const op = r?.status === 'done' ? (r.opening || []) : [];
+  $('openingBox').hidden = r?.status !== 'done';
+  $('opening').innerHTML = op.map((o, i) => `
+    <li data-o="${i}">
+      <div><b>Nước ${o.number}</b> · góc ${o.corner}: ${o.color === 'B' ? '⚫' : '⚪'} <b>${o.move}</b>
+        <span class="loss">mất ${o.loss} điểm</span>${o.played_rating ? ` <span class="muted">(trong cây: ${J_RATING[o.played_rating]})</span>` : ''}</div>
+      <div class="line">${o.tenuki ? 'Định thức ở góc này đã xong: nên đi chỗ khác (tenuki).'
+        : `Định thức nên đi: ${o.joseki.map(([c, mv], k) => `${k + 1}.${c === 'B' ? '⚫' : '⚪'}${mv}`).join(' ')}${o.ends ? ' → hết định thức, đi chỗ khác' : ' …'}`}</div>
+    </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Khai cuộc không có nước sai đáng kể ở góc (so với cây định thức).</li>' : '');
 }
+$('opening').addEventListener('click', e => {
+  const li = e.target.closest('li[data-o]');
+  if (!li) return;
+  const o = reviewData.opening[+li.dataset.o];
+  gotoGameMove(o.number - 1);
+  document.querySelectorAll('#opening li').forEach(x => x.classList.toggle('on', x === li));
+  if (o.joseki.length) {
+    followMode = 'kata';
+    kataLine = { moves: o.joseki.map(([, mv]) => mv), first: o.color, base: played.slice(), k: 0, matrix: clone(matrix) };
+  }
+  render();
+  setStatus('info', o.tenuki ? `Thế cờ trước nước ${o.number}: góc ${o.corner} đã xong định thức, ${NAME[o.color]} nên đi chỗ khác thay vì ${o.move}.`
+    : `Thế cờ trước nước ${o.number}: thay vì ${o.move}, định thức ở góc ${o.corner} là số 1–${Math.min(WINDOW, o.joseki.length)} viền xanh · chạm số hoặc ▶ để đi theo.`);
+  $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 
 // The browser drives the review: one request = ~20 s of KataGo work, progress is saved in the session
 async function runReview() {
@@ -1302,7 +1339,7 @@ $('reviewSide').addEventListener('click', e => {
 $('mistakes').addEventListener('click', e => {
   const li = e.target.closest('li[data-i]');
   if (!li) return;
-  const m = reviewData.mistakes[reviewSide][+li.dataset.i];
+  const m = shownMistakes()[+li.dataset.i];
   const act = e.target.closest('button')?.dataset.act;
   if (act === 'try') {
     gotoGameMove(m.number - 1);
@@ -1721,6 +1758,7 @@ const J_START = { Q16: '4-4 · sao (hoshi)', R16: '3-4 · tiểu mục (komoku)'
 const J_RATING = { best: 'tốt nhất', good: 'tốt', ok: 'chơi được' };
 const J_COLOR = { best: '#2f7d4f', good: '#8a8f2a', ok: '#d08a1e' };
 const jWho = i => i % 2 ? 'W' : 'B';
+const jInCorner = mv => COLS.indexOf(mv[0]) >= J_FROM && 19 - parseInt(mv.slice(1), 10) < J_SIZE;
 
 async function loadJoseki() {
   if (!jTree) {
@@ -1773,23 +1811,28 @@ function renderJoseki() {
   }
   node.next.forEach((k, i) => {
     const [r, c] = [19 - parseInt(k.move.slice(1), 10), COLS.indexOf(k.move[0])];
+    if (k.tenuki || c < J_FROM || r >= J_SIZE) return;   // a tenuki is played elsewhere: in the list only
     h += `<g data-j="${i}"><circle cx="${X(c)}" cy="${Y(r)}" r="13" fill="${J_COLOR[k.rating]}" opacity=".9"/>
       <text x="${X(c)}" y="${Y(r) + 4.5}" font-size="13" font-weight="700" text-anchor="middle" fill="#fff">${'ABCDEFGH'[i]}</text></g>`;
   });
   $('jBoard').setAttribute('viewBox', `0 0 ${W} ${W}`);
   $('jBoard').innerHTML = h;
   const who = NAME[jWho(jPath.length)];
+  const afterTenuki = jPath.length && !jInCorner(jPath.at(-1));
   $('jStatus').innerHTML = !jPath.length ? 'Chọn điểm Đen mở góc.'
     : node.unsearched ? 'KataGo chưa tính sâu tới đây (ngoài phần cây đã dựng).'
-    : node.settled ? `<b>Định thức kết thúc</b>: ${who} nên đi chỗ khác (tenuki), mọi nước ở góc đều kém hơn.`
+    : node.done ? `<b>Góc đã xong</b>: cả hai bên đều đi chỗ khác.`
+    : node.settled ? `<b>${afterTenuki ? 'Góc yên' : 'Định thức kết thúc'}</b>: ${who} nên đi chỗ khác (tenuki), mọi nước ở góc đều kém hơn${node.next.length ? ' · bấm Tenuki để xem bên kia đi tiếp ở góc' : ''}.`
     : `Nước ${jPath.length + 1}: tới lượt <b>${who}</b> · ${NAME[node.score_lead >= 0 ? jWho(jPath.length) : jWho(jPath.length + 1)]} hơn ${Math.abs(node.score_lead).toFixed(1)} điểm (cả komi)`;
-  let rows = node.next.map((k, i) => `<li data-j="${i}"><span class="jl" style="background:${J_COLOR[k.rating]}">${'ABCDEFGH'[i]}</span>
+  let rows = node.next.map((k, i) => k.tenuki ? `<li data-j="${i}" class="tenuki" style="cursor:pointer;color:inherit"><span class="jl" style="background:#7a6f62">↗</span>
+      Tenuki: ${jWho(jPath.length) === 'B' ? '⚫' : '⚪'}<b>${k.move}</b> <span class="muted">· nước tốt nhất ở chỗ khác${k.searched === false ? ' · chưa tính tiếp' : ''}</span></li>`
+    : `<li data-j="${i}"><span class="jl" style="background:${J_COLOR[k.rating]}">${'ABCDEFGH'[i]}</span>
       <b>${k.move}</b> ${jPath.length ? J_RATING[k.rating] : J_START[k.move] || ''}
       ${jPath.length ? `<span class="muted">· mất ${Math.max(0, k.loss).toFixed(1)} điểm so với nước tốt nhất toàn bàn${k.searched === false ? ' · chưa tính tiếp' : ''}</span>` : ''}</li>`).join('');
-  if (jPath.length && node.tenuki != null) rows += `<li class="tenuki"><span class="jl" style="background:#7a6f62">↗</span>Tenuki (đi chỗ khác)
+  if (jPath.length && node.tenuki != null && !node.next.some(k => k.tenuki)) rows += `<li class="tenuki"><span class="jl" style="background:#7a6f62">↗</span>Tenuki (đi chỗ khác)
       <span class="muted">· ${node.tenuki <= 0.05 ? 'tốt nhất toàn bàn' : `mất ${node.tenuki.toFixed(1)} điểm`}</span></li>`;
   $('jNext').innerHTML = rows;
-  $('jSeq').textContent = jPath.length ? jPath.map((m, i) => `${i + 1}.${jWho(i) === 'B' ? '⚫' : '⚪'}${m}`).join(' ') : '';
+  $('jSeq').textContent = jPath.length ? jPath.map((m, i) => `${i + 1}.${jWho(i) === 'B' ? '⚫' : '⚪'}${m}${jInCorner(m) ? '' : ' (tenuki)'}`).join(' ') : '';
   $('jBack').disabled = $('jFirst').disabled = !jPath.length;
   $('jMain').disabled = !node.next.length;
   $('jToBoard').disabled = $('jAsk').disabled = !jPath.length;
@@ -1804,10 +1847,10 @@ $('jBoard').addEventListener('click', e => { const g = e.target.closest('[data-j
 $('jNext').addEventListener('click', e => { const li = e.target.closest('li[data-j]'); if (li) jGo(+li.dataset.j); });
 $('jBack').addEventListener('click', () => { jPath.pop(); renderJoseki(); });
 $('jFirst').addEventListener('click', () => { jPath = []; renderJoseki(); });
-$('jMain').addEventListener('click', () => {   // the best branch, until the joseki ends or the tree does
-  for (let n = 0; n < 40; n++) {
-    const k = jNode().next[0];
-    if (!k || (jPath.length && jNode().settled)) break;
+$('jMain').addEventListener('click', () => {   // the best branch to its end, through the tenukis after the joseki
+  for (let n = 0; n < 80; n++) {
+    const node = jNode(), k = node.next[0];
+    if (!k || node.unsearched) break;
     jPath.push(k.move);
   }
   renderJoseki();

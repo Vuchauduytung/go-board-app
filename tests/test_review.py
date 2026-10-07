@@ -173,3 +173,29 @@ def test_review_of_a_game_against_the_ai_uses_what_was_searched(storage):
     assert not scans and r['done'] == len(game['moves']) + 1   # no position scanned again
     # and the deep searches are the very queries already answered (a cache hit in the app)
     assert all(kgcache.key({**review.position(game, int(i)), **coach.ROOT}) in known for i in r['deep'])
+
+
+def test_opening_mistake_gets_the_joseki_in_its_own_corner():
+    # the joseki tree (top-right corner): 4-4, 3-3 invasion, block, hane … ends
+    nodes = {
+        'Q16': {'settled': False, 'next': [{'move': 'R17', 'rating': 'best'}]},
+        'Q16 R17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}, {'move': 'Q17', 'rating': 'best'}]},
+        'Q16 R17 R16': {'settled': False, 'next': [{'move': 'Q17', 'rating': 'best'}]},
+        'Q16 R17 R16 Q17': {'settled': False, 'next': [{'move': 'P16', 'rating': 'best'}]},
+        'Q16 R17 R16 Q17 P16': {'settled': False, 'next': [{'move': 'O18', 'rating': 'best'}]},
+        'Q16 R17 R16 Q17 P16 O18': {'settled': True, 'next': []},
+    }
+    # the game: Black's 4-4 in the bottom-left (D4), White invades at 3-3 (C3), Black blocks the wrong way… at E3?
+    moves = [['B', 'D4'], ['W', 'C3'], ['B', 'E5'], ['W', 'Q16']]
+    game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
+    r = {'positions': {str(i): [0.5, 0.0, None, 3.0 if i == 2 else 0.0, -3.0 if i == 2 else 0.0] for i in range(5)}}
+    out = review.opening_review(game, r, nodes)
+    assert len(out) == 1
+    o = out[0]
+    assert o['number'] == 3 and o['corner'] == 'dưới-trái' and o['loss'] >= 1
+    # R16 in the top-right is C4 (or D3, across the diagonal) in the bottom-left; then the main line, alternating
+    assert o['joseki'][0][0] == 'B' and o['joseki'][0][1] in ('C4', 'D3') and [c for c, _ in o['joseki']] == ['B', 'W', 'B', 'W']
+    # playing the joseki's own move is never reported, however much it cost on the whole board
+    r['positions']['2'] = [0.5, 0.0, None, 3.0, -3.0]
+    good = review.game_from_moves([[0] * 19 for _ in range(19)], [['B', 'D4'], ['W', 'C3'], ['B', 'C4']], 6.5, 'a', 'b')
+    assert review.opening_review(good, r, nodes) == []

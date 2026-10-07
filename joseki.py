@@ -10,6 +10,7 @@ corner move loses SETTLED points or more next to it: nothing in the corner is ur
 best corner move are grown first, so the main lines reach their end within the budget. Moves mirrored across the corner's diagonal from a symmetric position are kept once.
 
     python -m joseki build [--nodes 2500] [--visits 500]   # on the server: KataGo searches, writes JOSEKI_PATH
+    python -m joseki deepen --url http://KATAGO [--max-depth 50]   # grow the built tree, see deepen()
 """
 import argparse
 import heapq
@@ -136,6 +137,123 @@ def build(katago, max_nodes=2500, visits=500, parallel=8, log=print):
             'region': 'J19-T9', 'starts': STARTS, 'nodes': nodes}
 
 
+# ---- deepening: the lines go on after the joseki, up to DEEP_DEPTH moves. Where the joseki ended the side to move
+# plays its best move elsewhere (a real stone: a "tenuki" branch), then the other side answers in the corner or
+# tenukis too; two tenukis in a row: the corner is finished ("done"). Each line of the built tree goes on as one line
+# (the best move; no new branches inside the built tree either): the complete joseki first (lines that reached their
+# end), then the lines the build left unfinished, each class best-first. Meant for a slow CPU KataGo: one query at a
+# time, saved every few positions so the app shows the deeper tree as it grows. ----
+DEEP_DEPTH = 50
+DEEP_WIDTH, DEEP_BRANCH, DEEP_SINGLE = 1, 0.5, 30
+
+
+def http_katago(url):
+    import urllib.request
+
+    def run(payload):
+        req = urllib.request.Request(url.rstrip('/') + '/analyze', json.dumps(payload).encode(),
+                                     {'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=600) as r:
+            return json.loads(r.read())
+    return run
+
+
+def _expand(res, corner_res, moves, built_depth):
+    """Children of a position being deepened: the built tree's rule, narrower past built_depth, and the tenuki."""
+    kids, tenuki, settled = branches(res, moves, corner_res)
+    width = 1 if len(moves) >= DEEP_SINGLE else DEEP_WIDTH
+    kids = [k for k in kids if k['delta'] <= DEEP_BRANCH][:width]
+    if settled:
+        away = [m for m in _trusted(res) if not local(m['move'])]
+        if away and not local(moves[-1]):   # the other side has just tenukied too: the corner is finished
+            return [], tenuki, True, True
+        if away:
+            best = max(away, key=lambda m: m['score_lead'])
+            kids = [{'move': best['move'], 'tenuki': True, 'loss': tenuki or 0.0, 'delta': 0.0, 'rating': 'best',
+                     'visits': best['visits'], 'winrate': best['winrate'], 'score_lead': best['score_lead']}]
+    return kids, tenuki, settled, False
+
+
+def deepen(katago, tree, max_depth=DEEP_DEPTH, visits=200, whole_visits=60, save=None, save_every=25,
+           hours=None, log=print):
+    """Grow `tree` in place, best-first by how far each line is from the best moves, until every line reached
+    max_depth or ended (or `hours` passed). save(tree) is called every save_every positions and at the end."""
+    nodes = tree['nodes']
+    built = max(len(k.split()) for k in nodes)
+    stop = time.time() + hours * 3600 if hours else None
+
+    def cost(key):
+        c, parts = 0.0, key.split()
+        for i in range(1, len(parts)):
+            parent = nodes.get(' '.join(parts[:i]), {})
+            k = next((x for x in parent.get('next', []) if x['move'] == parts[i]), None)
+            c += 2 * (k['delta'] if k else 0.5) + 0.1
+        return c
+
+    heap, counter = [], 0
+    for key, node in nodes.items():
+        depth = len(key.split())
+        if depth >= max_depth or node.get('done'):
+            continue
+        if node.get('settled') and not node.get('next'):            # a complete joseki: on with its tenuki
+            heap.append(((0, cost(key)), counter := counter + 1, key.split(), True))
+        nxt = node.get('next', [])
+        if nxt and not node.get('settled') and f'{key} {nxt[0]["move"]}' not in nodes:   # unfinished: its best move
+            heap.append(((1, cost(key) + 2 * nxt[0]['delta'] + 0.1), counter := counter + 1, key.split() + [nxt[0]['move']], False))
+        if nxt and node.get('settled') and nxt[0].get('tenuki') and f'{key} {nxt[0]["move"]}' not in nodes:   # resumed
+            heap.append(((0, cost(key) + 0.1), counter := counter + 1, key.split() + [nxt[0]['move']], False))
+    heapq.heapify(heap)
+    done, start = 0, time.time()
+    while heap and (stop is None or time.time() < stop):
+        (cls, c), _, moves, again = heapq.heappop(heap)
+        key = ' '.join(moves)
+        if key in nodes and not again:
+            continue
+        res, corner_res = search_deep(katago, moves, visits, whole_visits)
+        kids, tenuki, settled, finished = _expand(res, corner_res, moves, built)
+        nodes[key] = {**nodes.get(key, {}), 'winrate': res['winrate'], 'score_lead': res['score_lead'], 'tenuki': tenuki,
+                      'settled': settled, 'next': kids, **({'done': True} if finished else {})}
+        if len(moves) < max_depth:
+            for k in kids:
+                heapq.heappush(heap, ((cls, c + 2 * k['delta'] + 0.1), counter := counter + 1, moves + [k['move']], False))
+        done += 1
+        if done % save_every == 0:
+            _mark_searched(nodes)
+            if save:
+                save(tree)
+            log(f'+{done} positions ({len(nodes)} in all, {len(heap)} waiting, deepest {max(len(k.split()) for k in nodes)}), '
+                f'{(time.time() - start) / done:.1f} s each')
+    _mark_searched(nodes)
+    tree['deepened_at'] = time.strftime('%Y-%m-%d')
+    tree['max_depth'] = max_depth
+    if save:
+        save(tree)
+    return tree
+
+
+def search_deep(katago, moves, visits, whole_visits):
+    """As search(), with its own visits for the whole board (only the tenuki is needed from it)."""
+    colored = [['B' if i % 2 == 0 else 'W', m] for i, m in enumerate(moves)]
+    base = {'matrix': [[0] * N for _ in range(N)], 'to_play': 'B', 'moves': colored, 'komi': 7.5, 'ownership': False}
+    taken = set(moves)
+    return (katago({**base, 'top': 5, 'max_visits': whole_visits}),
+            katago({**base, 'top': 20, 'max_visits': visits, 'avoid': [p for p in OUTSIDE if p not in taken]}))
+
+
+def _mark_searched(nodes):
+    for key, node in nodes.items():
+        for k in node.get('next', []):
+            k['searched'] = f'{key} {k["move"]}' in nodes
+
+
+def save_tree(tree, path=None):
+    path = path or PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(tree, separators=(',', ':')))
+    tmp.replace(path)
+
+
 def load():
     for f in (PATH, BUNDLED):
         if f.is_file():
@@ -145,10 +263,19 @@ def load():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('cmd', choices=['build'])
+    ap.add_argument('cmd', choices=['build', 'deepen'])
     ap.add_argument('--nodes', type=int, default=2500)
     ap.add_argument('--visits', type=int, default=500)
+    ap.add_argument('--url', help='deepen: a KataGo service (katago_server.py), e.g. the VM\'s CPU one')
+    ap.add_argument('--max-depth', type=int, default=DEEP_DEPTH)
+    ap.add_argument('--hours', type=float)
     args = ap.parse_args()
+    if args.cmd == 'deepen':
+        tree = json.loads(load().read_text())
+        deepen(http_katago(args.url), tree, args.max_depth, visits=min(args.visits, 300), save=save_tree,
+               hours=args.hours, log=lambda s: print(s, file=sys.stderr, flush=True))
+        print(f'{len(tree["nodes"])} positions -> {PATH}')
+        return
     import usage
     usage.SOURCE = 'joseki'   # its Modal GPU time goes into the admins' report (usage.py)
     usage.start(None)

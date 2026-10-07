@@ -799,6 +799,9 @@ def review_step(sid: str, user: str = Depends(current_user)):
     if not s.get('game'):
         raise HTTPException(400, 'Ván này không có kỷ lục SGF để review')
     r = s.get('review') or review.new_review(s['game'])
+    if r['status'] == 'done' and 'opening' not in r:   # reviewed before the opening review existed
+        r['opening'] = review.opening_review(s['game'], r)
+        sessions.set_review(user, sid, r)
     if r['status'] != 'done':
         try:
             r = review.step(s['game'], r, _katago_for(user, sid), peek=lambda p: kgcache.lookup(p, (user, sid)))
