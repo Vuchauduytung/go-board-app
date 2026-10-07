@@ -66,6 +66,12 @@ ROOT = Path(__file__).parent
 MODELS = Path(os.environ.get('MODELS_DIR', ROOT / 'models'))
 DATA = Path(os.environ.get('DATA_DIR', ROOT / 'data'))
 KATAGO_URL = os.environ.get('KATAGO_URL', 'http://katago:8080')
+# KataGo on the VM's own CPU (katago/Dockerfile.src, ~18 visits/s on the 2 ARM cores): games against the AI always
+# run there (payload engine="cpu"); everything else falls back to it while the main KataGo (Modal GPU) fails or has
+# no credit left, with fewer visits so that it stays usable.
+KATAGO_CPU_URL = os.environ.get('KATAGO_CPU_URL', '')
+CPU_MAX_VISITS = int(os.environ.get('KATAGO_CPU_MAX_VISITS', '200'))
+GPU_RETRY = 300   # seconds on the CPU after the GPU failed, before trying it again
 BOOK_PAGES = Path(os.environ.get('BOOK_PAGES_DIR', ROOT / 'books' / 'pages'))
 MAX_SIDE = 1600
 
@@ -273,19 +279,59 @@ class KataGoError(Exception):
         self.status = status
 
 
+_gpu_down = {'until': 0.0}
+
+
+def _post_katago(url, payload, headers, timeout):
+    req = urllib.request.Request(url + '/analyze', json.dumps(payload).encode(), headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as ex:
+        try:
+            detail = json.loads(ex.read() or b'{}').get('error', str(ex))
+        except ValueError:
+            detail = str(ex)
+        raise KataGoError(422 if ex.code == 400 else 502, f'KataGo: {detail}')
+    except (urllib.error.URLError, TimeoutError, OSError) as ex:
+        raise KataGoError(503, f'KataGo chưa sẵn sàng: {ex}')
+
+
+def _katago_cpu(payload, fallback):
+    """On the VM's CPU; a fallback query has its visits cut (and its answer is marked, not to be cached as a full one)."""
+    p = dict(payload)
+    if fallback and int(p.get('max_visits', 400)) > CPU_MAX_VISITS:
+        p['max_visits'] = CPU_MAX_VISITS
+    usage.add('katago:cpu_fallback' if fallback else 'katago:cpu_requests')
+    res = _post_katago(KATAGO_CPU_URL, p, {'Content-Type': 'application/json'}, 180)
+    res['engine'] = 'cpu'
+    if p.get('max_visits') != payload.get('max_visits'):
+        res['degraded'] = True
+    return res
+
+
 def _katago(payload):
-    """POST a query to the KataGo service; raises KataGoError with an HTTP status for the client."""
-    req = urllib.request.Request(KATAGO_URL + '/analyze', json.dumps(payload).encode(), _katago_headers())
+    """A KataGo query; raises KataGoError with an HTTP status for the client. engine="cpu" in the payload: on the VM's
+    CPU. Otherwise the main KataGo, and the CPU while it fails (GPU_RETRY seconds before trying it again)."""
+    engine = payload.get('engine')
+    payload = {k: v for k, v in payload.items() if k != 'engine'}
+    if KATAGO_CPU_URL and engine == 'cpu':
+        return _katago_cpu(payload, fallback=False)
+    if KATAGO_CPU_URL and time.time() < _gpu_down['until']:
+        return _katago_cpu(payload, fallback=True)
     start = time.time()
     try:
         # a Modal GPU that scaled to zero may need a minute or more to start
-        with urllib.request.urlopen(req, timeout=150 if os.environ.get('KATAGO_AUTH') == 'modal' else 90) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as ex:
-        detail = json.loads(ex.read() or b'{}').get('error', str(ex))
-        raise KataGoError(422 if ex.code == 400 else 502, f'KataGo: {detail}')
-    except (urllib.error.URLError, TimeoutError) as ex:
-        raise KataGoError(503, f'KataGo chưa sẵn sàng: {ex}')
+        res = _post_katago(KATAGO_URL, payload, _katago_headers(), 150 if os.environ.get('KATAGO_AUTH') == 'modal' else 90)
+        res['engine'] = 'gpu' if os.environ.get('KATAGO_AUTH') == 'modal' else 'main'
+        return res
+    except KataGoError as ex:
+        if ex.status == 422 or not KATAGO_CPU_URL:   # a bad query fails anywhere
+            raise
+        log.warning('main KataGo failed, using the CPU for %d s: %s', GPU_RETRY, ex)
+        _gpu_down['until'] = time.time() + GPU_RETRY
+        usage.add('katago:gpu_failures')
+        return _katago_cpu(payload, fallback=True)
     finally:
         if os.environ.get('KATAGO_AUTH') == 'modal':   # billed by the second: counted for the admins' report
             usage.katago(start, time.time(), int(payload.get('max_visits', 400)))

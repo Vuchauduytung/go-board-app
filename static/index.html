@@ -1048,6 +1048,7 @@ $('analyze').addEventListener('click', async () => {
         <span class="pv">${mv.pv.slice(1, 6).join(' ')}</span>
       </li>`).join('') || '<li class="muted">Không có nước đề xuất</li>';
     $('sugg').hidden = false;
+    if (j.degraded) setStatus('info', 'GPU đang lỗi hoặc hết credit: KataGo tạm chạy bằng CPU của máy chủ, ít lượt tìm hơn nên gợi ý kém chính xác hơn một chút.');
     render();
   } catch (err) {
     setStatus('err', 'Phân tích thất bại: ' + err.message);

@@ -25,7 +25,9 @@ LEVELS = {
 }
 LEVELS.update({k: tuple(v) for k, v in json.loads(os.environ.get('BOT_LEVELS') or '{}').items()})
 UNSURE = 1.5        # points added to the loss of a move searched once (less for more visits, see above)
-SEARCH = coach.ROOT   # the review's own full search, so a finished game is reviewed from what was searched
+# Games against the AI run on the VM's CPU (app.KATAGO_CPU_URL): fewer visits than the GPU's full search, so that a
+# move takes ~5.5 s on the 2 ARM cores (18 visits/s). The review also reads these answers (review._scan).
+SEARCH = {'top': 40, 'ownership': False, 'max_visits': int(os.environ.get('PLAY_VISITS', '100')), 'engine': 'cpu'}
 RELIABLE = 0.1      # the best move is taken among candidates with at least this share of the top visits
 PASS_WHEN_DONE = 0.3     # the AI passes when passing loses at most this (nothing left worth a move)…
 PASS_AFTER_PASS = 1.0    # …or this much once the player has passed (filling its own area gains nothing)

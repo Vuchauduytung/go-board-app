@@ -105,8 +105,9 @@ def new_review(game):
 def _scan(katago, game, i, peek=None):
     """[winrate, lead, best move, best lead, lead of the move played or None] for the side to move at i. A full
     search of the position done before (a game against the AI searches every position) is used instead."""
-    res = (peek and peek({**position(game, i), **coach.ROOT})) or \
-        katago({**position(game, i), 'max_visits': SCAN_VISITS, 'top': 40, 'ownership': False})
+    import bot
+    known = peek and next((r for s in (coach.ROOT, bot.SEARCH) if (r := peek({**position(game, i), **s}))), None)
+    res = known or katago({**position(game, i), 'max_visits': SCAN_VISITS, 'top': 40, 'ownership': False})
     best = res['moves'][0] if res['moves'] else None
     played = game['moves'][i][1] if i < len(game['moves']) else None
     mine = next((m for m in res['moves'] if m['move'] == played and m['visits'] >= 2), None)

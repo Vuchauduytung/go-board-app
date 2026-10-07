@@ -205,6 +205,11 @@ def report(now=None, day=None):
              + f' → dự kiến cả tháng ≈ ${proj_cost:.2f}'
              + (f' (miễn phí ${MODAL_FREE:.0f}: {proj_cost / MODAL_FREE:.0%})' if MODAL_FREE else '')
              + ('' if trusted else f' · mới đếm {counted:.1f} ngày, dự kiến chưa tin cậy')]
+    cpu, fallback, failures = (int(d.get(k, 0)) for k in ('katago:cpu_requests', 'katago:cpu_fallback', 'katago:gpu_failures'))
+    lines.append(f'   KataGo CPU của VM: {cpu} lượt đánh với AI · {fallback} lượt dự phòng khi GPU lỗi ({failures} lần lỗi)')
+    if failures:
+        alerts.append(f'⚠️ GPU Modal lỗi {failures} lần hôm {day:%d/%m}, app đã tạm chạy KataGo bằng CPU của VM ({fallback} '
+                      'lượt, chậm và ít lượt tìm hơn). Nếu do hết credit Modal thì sẽ kéo dài tới đầu tháng sau.')
     week = [data.get((now - timedelta(days=k)).strftime('%Y-%m-%d'), {}).get('katago:gpu_seconds', 0) for k in range(1, 8)]
     before = [days((now - timedelta(days=k)).strftime('%Y-%m')).get((now - timedelta(days=k)).strftime('%Y-%m-%d'), {})
               .get('katago:gpu_seconds', 0) for k in range(8, 15)]

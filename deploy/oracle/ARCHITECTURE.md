@@ -26,6 +26,7 @@ flowchart LR
                 llm["rag/llm.py<br/>chuỗi LLM dự phòng"]
             end
             valkey[("valkey<br/>lịch sử chat, hạn mức,<br/>cache KataGo")]
+            kcpu["katago (CPU, b15)<br/>~18 lượt/s<br/>đánh với AI + dự phòng"]
             data[("/srv/go-scan<br/>scans/ · sessions/ · feedback/")]
             pages[("books/pages<br/>ảnh trang sách, read-only")]
         end
@@ -57,7 +58,8 @@ flowchart LR
     api --> data
     api --> pages
     api --> valkey
-    api -- "gợi ý nước đi" --> katago
+    api -- "gợi ý, review, trợ lý" --> katago
+    api -- "đánh với AI; khi Modal lỗi" --> kcpu
     api --> emb -- "tìm kiếm vector" --> qdrant
     api --> llm --> gemini
     api -- "/api/stt" --> whisper
@@ -74,7 +76,8 @@ flowchart LR
 |---|---|
 | Vào trang | DuckDNS → Security List/iptables (443) → Caddy (HTTPS) → oauth2-proxy (Google, `emails.txt`) → app |
 | Chụp bàn cờ | `/api/recognize`: Moku RT-DETR + image2sgf → ma trận bàn cờ, ảnh lưu ở `/srv/go-scan/scans` |
-| Gợi ý nước đi | `/api/analyze` → KataGo trên Modal (khởi động nguội ~20–30 s), kết quả cache trong Valkey |
+| Gợi ý nước đi | `/api/analyze` → KataGo trên Modal (khởi động nguội ~20–30 s), kết quả cache trong Valkey; Modal lỗi hoặc hết credit → KataGo CPU trên VM (200 lượt), thử lại Modal sau 5 phút |
+| Đánh với AI | `/api/play` → luôn KataGo CPU trên VM (100 lượt tìm, ~5,5 s một nước), không tốn credit Modal |
 | Hỏi trợ lý / sách | `/api/chat` → e5 embedding → Qdrant → chuỗi LLM (model đầu tiên trả lời được thì dùng) → trích dẫn ảnh trang sách |
 | Ván / review | `/api/sessions`, `/api/sgf` → `/srv/go-scan/sessions` (theo email); mỗi ván lưu cả **cây nước đi** (mọi nhánh đã thử, nhánh đang sáng) |
 | Hỏi bằng giọng nói | Trình duyệt tự nhận giọng (Chrome, Safari, `vi-VN`); không có thì ghi âm → `/api/stt` → Groq Whisper (dự phòng Gemini). Câu trả lời đọc bằng giọng tiếng Việt của máy (`speechSynthesis`) |

@@ -84,6 +84,8 @@ def cached(run, payload, session=None):
     value = peek(payload)
     if value is None:
         value = run(payload)
+        if value.get('degraded'):   # fewer visits than asked (KataGo's CPU fallback): not kept as the real answer
+            return value
         put(payload, value)
     if session:
         sessions.cache_put(*session, k, value)

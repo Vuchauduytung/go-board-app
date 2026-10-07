@@ -1,5 +1,6 @@
-# Go Scan on an Oracle Cloud Always Free VM (Ampere A1, aarch64, 2 OCPU / 12 GB): app + Valkey, KataGo on Modal
-# (or on the VM's CPU with the "katago" profile), and one way in for users (COMPOSE_PROFILES in .env):
+# Go Scan on an Oracle Cloud Always Free VM (Ampere A1, aarch64, 2 OCPU / 12 GB): app + Valkey, KataGo on Modal's GPU
+# with KataGo on the VM's CPU next to it (games against the AI, and the fallback when Modal fails), and one way in for
+# users (COMPOSE_PROFILES in .env):
 #   duckdns     free <name>.duckdns.org: Caddy (HTTPS, ports 80/443) + oauth2-proxy (Google sign-in)
 #   cloudflare  own domain on Cloudflare: Cloudflare Tunnel + Access, no open port
 #
@@ -28,6 +29,7 @@ services:
       KATAGO_URL: ${KATAGO_URL:-http://katago:8080}
       KATAGO_AUTH: ${KATAGO_AUTH:-}
       KATAGO_MODAL_TOKEN: ${KATAGO_MODAL_TOKEN:-}
+      KATAGO_CPU_URL: ${KATAGO_CPU_URL:-http://katago:8080}   # the service below
       GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in deploy/oracle/.env}
       QDRANT_URL: ${QDRANT_URL:?set QDRANT_URL in deploy/oracle/.env}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
@@ -48,13 +50,15 @@ services:
     volumes:
       - valkey:/data
 
-  # KataGo on the VM's 2 ARM cores (slow): only when not using Modal
+  # KataGo on the VM's 2 ARM cores (~18 visits/s on a new position): games against the AI, and every query while Modal
+  # fails. Both cores when the app is idle, a lower share when it is busy (a hard CPU cap throttled it 30 %).
   katago:
-    profiles: ["katago"]
     build:
       context: ../../katago
       dockerfile: Dockerfile.src
     restart: unless-stopped
+    cpu_shares: 512
+    mem_limit: 3g
 
   # --- duckdns: HTTPS by Caddy (Let's Encrypt), Google sign-in by oauth2-proxy, allowed e-mails in emails.txt ---
   caddy:

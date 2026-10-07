@@ -48,7 +48,10 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   phía trước (`POST /api/sessions/{id}/review/line`) và lưu cùng lỗi đó.
 - AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → OpenRouter → Mistral), xem
   [deploy/LLM_PROVIDERS.md](deploy/LLM_PROVIDERS.md).
-- KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~21 lượt/s trên CPU):
+- KataGo hai tầng: GPU Modal là chính; KataGo CPU trên chính VM (`katago` trong compose, ~18 lượt/s) chạy các ván
+  đánh với AI (100 lượt tìm, ~5,5 s một nước) và thay GPU khi Modal lỗi hoặc hết credit (200 lượt, thử lại GPU sau
+  5 phút; câu trả lời ít lượt hơn không vào cache). Báo cáo Telegram đếm số lượt CPU và cảnh báo khi GPU lỗi.
+- KataGo trên GPU Modal (L4, tắt khi không dùng, ~1.700 lượt/s so với ~18 lượt/s trên CPU của VM):
   `modal deploy katago/modal_katago.py`, rồi đặt `KATAGO_URL`, `KATAGO_AUTH=modal`, `KATAGO_MODAL_TOKEN` cho app.
 
 ## Chạy

@@ -67,3 +67,7 @@ def test_passes_at_the_end_never_in_the_middle():
     middle = answer([3, 2, 1, -6])
     middle['moves'][3]['move'] = 'pass'
     assert not any(bot.choose(middle, '5k', random.Random(i))['move'] == 'pass' for i in range(300))
+
+
+def test_games_run_on_the_cpu():
+    assert bot.SEARCH['engine'] == 'cpu' and bot.SEARCH['max_visits'] <= 200 and bot.SEARCH['top'] == 40
