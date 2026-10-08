@@ -317,11 +317,12 @@
         <button type="button" id="vsResign">🏳 Xin thua</button>
         <button type="button" id="vsCount">Đếm điểm</button>
         <button type="button" id="vsLand" hidden>🗺 Xem đất</button>
-        <button type="button" id="vsReview" hidden>📋 Review ván này</button>
+        <button type="button" id="vsReview" hidden>📋 Review ván</button>
+        <button type="button" id="vsJoseki" hidden>📘 Review định thức</button>
       </div>
     </div>
     <div class="review" style="margin:0 0 12px;border-top:0;padding-top:0" id="reviewBox" hidden>
-      <h2>📋 Review ván</h2>
+      <h2>📋 Review ván <span class="muted" style="font-weight:400;font-size:13px">· KataGo GPU</span></h2>
       <div class="muted" id="reviewInfo"></div>
       <div class="progress" id="reviewProgress" hidden><i></i></div>
       <button class="btn accent field" type="button" id="reviewRun" hidden>▶ Review ván này</button>
@@ -334,10 +335,11 @@
         <button class="src" type="button" id="gameEnd">⏭ Về cuối ván gốc</button>
       </div>
       <ol class="mistakes" id="mistakes"></ol>
-      <div id="openingBox" hidden>
-        <h2 style="margin-top:12px">📘 Khai cuộc: định thức nên đi</h2>
-        <div class="muted" style="font-size:13px">Nước sai ở góc trong 40 nước đầu, so với cây định thức của KataGo (góc trống,
-          chưa tính quân ở chỗ khác). Chạm để xem thế cờ trước nó, định thức hiện số 1, 2, 3… viền xanh.</div>
+      <div id="josekiBox" hidden>
+        <h2 style="margin-top:14px">📘 Review định thức <span class="muted" style="font-weight:400;font-size:13px">· KataGo CPU</span></h2>
+        <div class="muted" id="jrInfo" style="font-size:13px"></div>
+        <div class="progress" id="jrProgress" hidden><i></i></div>
+        <button class="btn secondary field" type="button" id="jrRun">▶ Review định thức</button>
         <ol class="mistakes" id="opening"></ol>
       </div>
     </div>
@@ -558,6 +560,7 @@ function startBoard(start) {
   $('coachLog').innerHTML = '';
   variations = []; activeVar = null;
   showReview(null);
+  showJoseki(null);
   render();
   showSession();
 }
@@ -1176,6 +1179,7 @@ async function openSession(id) {
   if (!s.tree && game) lightLine(gameStones(game.moves));   // older SGF sessions: the game is the main line
   replay();
   showReview(s.review);
+  showJoseki(s.joseki_review || null);
   showSession();
   $('size').value = s.board_size;
   $('previewCard').hidden = !s.scan_id;
@@ -1265,9 +1269,10 @@ function showReview(r) {
   reviewData = r;
   $('reviewBox').hidden = !game;
   if (!game) return;
-  const running = r && r.status !== 'done';
+  const running = !!(r && r.status !== 'done' && (reviewing || r.done > 0));   // a review not started yet: no progress
   $('reviewInfo').textContent = !r ? '' : r.status === 'done'
     ? `Đã review ${r.total - 1} nước (komi ${game.komi}). Chạm một lỗi để xem thế cờ trước nó và biến tốt nhất 10 nước.`
+    : !running ? 'Chưa review: KataGo GPU xem từng thế cờ, tìm 10 lỗi lớn nhất mỗi bên kèm biến tốt nhất.'
     : r.phase === 'scan' ? `KataGo đang xem từng thế cờ: ${r.done}/${r.total}…`
     : `Đang tính biến tốt nhất cho các lỗi lớn: ${r.deep_done}/${r.deep_total}…`;
   $('reviewProgress').hidden = !running;
@@ -1286,18 +1291,59 @@ function showReview(r) {
         · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${m.best || '—'}</b></div>
       <div class="line">Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');
-  const op = r?.status === 'done' ? (r.opening || []) : [];
-  $('openingBox').hidden = r?.status !== 'done';
+  requestAnimationFrame(() => fitThree($('mistakes')));
+  $('josekiBox').hidden = !game;
+}
+
+// ---- joseki review: apart from the game's review, on the server's CPU KataGo (review.joseki_step) ----
+let josekiData = null, josekiRunning = null;
+function showJoseki(jr) {
+  if (jr && jr.done === undefined && jr.need) {   // as stored in the session
+    jr = { ...jr, total: jr.need.length, done: jr.need.filter(i => (jr.positions || {})[i]).length };
+  }
+  josekiData = jr;
+  $('josekiBox').hidden = !game;
+  if (!game) return;
+  const running = !!josekiRunning || (jr && jr.status !== 'done' && jr.done > 0);
+  $('jrInfo').textContent = jr?.status === 'done'
+    ? 'Các góc rời định thức trong 40 nước đầu, so với cây định thức của KataGo. Chạm một góc để xem: định thức hiện số 1, 2, 3… viền xanh.'
+    : running ? `KataGo CPU đang xét các nước ở góc: ${jr?.done || 0}/${jr?.total || '…'}…`
+    : 'Chạy riêng với review ván, bằng KataGo CPU của máy chủ (khoảng 1–4 phút): mỗi góc rời định thức ở đâu, nước sai sau đó và định thức nên đi.';
+  $('jrProgress').hidden = !running;
+  if (running && jr?.total) $('jrProgress').firstElementChild.style.width = Math.round(100 * jr.done / jr.total) + '%';
+  $('jrRun').hidden = jr?.status === 'done' || !!josekiRunning;
+  $('jrRun').textContent = jr && jr.done ? '▶ Tiếp tục review định thức' : '▶ Review định thức';
+  const dot = c => c === 'B' ? '⚫' : '⚪';
+  const op = jr?.status === 'done' ? (jr.results || []) : [];
   $('opening').innerHTML = op.map((o, i) => `
     <li data-o="${i}">
-      <div><b>Nước ${o.number}</b> · góc ${o.corner}: ${o.color === 'B' ? '⚫' : '⚪'} <b>${o.move}</b>
-        <span class="loss">mất ${o.loss} điểm</span>${o.played_rating ? ` <span class="muted">(trong cây: ${J_RATING[o.played_rating]})</span>` : ''}</div>
-      ${o.left && o.left !== o.number ? `<div class="line">Góc rời định thức từ nước ${o.left} (${o.left_color === 'B' ? '⚫' : '⚪'}${o.left_move}${o.left_loss < 0.5 ? ', KataGo vẫn cho là chơi được' : `, mất ${o.left_loss} điểm`}).</div>` : ''}
-      <div class="line">${o.tenuki ? `Tại nước ${o.left || o.number} định thức ở góc này đã xong: nên đi chỗ khác (tenuki).`
-        : `Định thức nên đi${o.left && o.left !== o.number ? ` từ nước ${o.left}` : ''}: ${o.joseki.map(([c, mv], k) => `${k + 1}.${c === 'B' ? '⚫' : '⚪'}${mv}`).join(' ')}${o.ends ? ' → hết định thức, đi chỗ khác' : ' …'}`}</div>
-    </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Khai cuộc không có nước sai đáng kể ở góc (so với cây định thức).</li>' : '');
-  requestAnimationFrame(() => { fitThree($('mistakes')); fitThree($('opening')); });
+      <div><b>Góc ${o.corner}</b> · rời định thức ở nước ${o.left}: ${dot(o.left_color)}<b>${o.left_move}</b>
+        ${o.left_loss == null ? '' : o.left_loss >= 1 ? `<span class="loss">mất ${o.left_loss} điểm</span>` : `<span class="muted">mất ${o.left_loss} điểm, chơi được</span>`}</div>
+      ${o.number && o.number !== o.left ? `<div class="line">Nước sai sau đó: nước ${o.number} ${dot(o.color)}${o.move} <span class="loss">mất ${o.loss} điểm</span></div>` : ''}
+      <div class="line">${o.tenuki ? 'Định thức ở góc này đã xong tại đây: nên đi chỗ khác (tenuki).'
+        : `Định thức nên đi từ nước ${o.left}: ${o.joseki.map(([c, mv], k) => `${k + 1}.${dot(c)}${mv}`).join(' ')}${o.ends ? ' → hết định thức, đi chỗ khác' : ' …'}`}</div>
+    </li>`).join('') || (jr?.status === 'done' ? '<li class="muted">Các góc đều đi đúng định thức (hoặc rời bằng tenuki), không có gì để so.</li>' : '');
+  requestAnimationFrame(() => fitThree($('opening')));
 }
+async function runJoseki() {
+  if (!session || !game || josekiRunning) return;
+  const sid = josekiRunning = session.id;
+  showJoseki(josekiData);
+  try {
+    while (session?.id === sid) {
+      const r = await apiJson(`api/sessions/${sid}/joseki/step`, { method: 'POST' });
+      if (session?.id !== sid) break;
+      showJoseki(r);
+      if (r.status === 'done') { setStatus('ok', 'Review định thức xong: chạm một góc để xem định thức nên đi.'); break; }
+    }
+  } catch (err) {
+    setStatus('err', 'Review định thức tạm dừng: ' + esc(err.message) + ' · bấm <b>Tiếp tục review định thức</b> để chạy tiếp.');
+  } finally {
+    josekiRunning = null;
+    if (session?.id === sid) showJoseki(josekiData);
+  }
+}
+$('jrRun').addEventListener('click', runJoseki);
 // Lists of the review: a box showing three items at a time, scrolled inside
 function fitThree(ol) {
   const h = [...ol.children].slice(0, 3).reduce((t, li) => t + li.getBoundingClientRect().height, 0);
@@ -1306,17 +1352,17 @@ function fitThree(ol) {
 $('opening').addEventListener('click', e => {
   const li = e.target.closest('li[data-o]');
   if (!li) return;
-  const o = reviewData.opening[+li.dataset.o], at = o.left || o.number, who = o.left_color || o.color, mv = o.left_move || o.move;
+  const o = josekiData.results[+li.dataset.o], at = o.left, who = o.left_color, mv = o.left_move;
   gotoGameMove(at - 1);   // where the corner left the joseki
   document.querySelectorAll('#opening li').forEach(x => x.classList.toggle('on', x === li));
   if (o.joseki.length) {
     followMode = 'kata';
-    kataLine = { moves: o.joseki.map(([, m]) => m), first: who, base: played.slice(), k: 0, matrix: clone(matrix) };
+    kataLine = { moves: o.joseki.map(([, m]) => m), first: who, base: played.slice(), k: 0, matrix: clone(matrix), engine: 'cpu' };
   }
   render();
   setStatus('info', o.tenuki ? `Thế cờ trước nước ${at}: góc ${o.corner} đã xong định thức, ${NAME[who]} nên đi chỗ khác thay vì ${mv}.`
     : `Thế cờ trước nước ${at}: thay vì ${mv}, định thức ở góc ${o.corner} là số 1–${Math.min(WINDOW, o.joseki.length)} viền xanh`
-      + (at !== o.number ? ` (nước sai ở nước ${o.number})` : '') + ' · chạm số hoặc ▶ để đi theo.');
+      + (o.number && at !== o.number ? ` (nước sai sau đó: nước ${o.number})` : '') + ' · chạm số hoặc ▶ để đi theo.');
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 
@@ -1505,7 +1551,7 @@ async function fetchLine(rl) {
     const j = rl.number   // a review mistake's line, kept with it; otherwise KataGo's line from any position
       ? await apiJson(`api/sessions/${rl.sid}/review/line`, { method: 'POST', body: { number: rl.number, line: rl.moves, count: BATCH } })
       : await apiJson('api/line', { method: 'POST', body: { matrix: rl.matrix, to_play: rl.first, komi: komi(), line: rl.moves,
-                                                            count: BATCH, session_id: session?.id } });
+                                                            count: BATCH, session_id: session?.id, engine: rl.engine } });
     if (rl.moves.length === sent) rl.moves.push(...j.moves);   // for a mistake: its own line
     if (!j.moves.length) rl.ended = true;
     rl.error = null;
@@ -1552,7 +1598,7 @@ function renderPlay() {
   renderScore();
   $('vsAi').disabled = !playing || play.thinking || toPlay !== play.ai || counting;
   $('vsUndo').disabled = !playing || play.thinking || !cur.parent || counting;
-  $('vsReview').hidden = !play.over || !!game;
+  $('vsReview').hidden = $('vsJoseki').hidden = !play.over;
   $('vsLand').hidden = !play.over || !!scoring;
 }
 
@@ -1579,18 +1625,30 @@ function gameMoves() {
   return out;
 }
 
-$('vsReview').addEventListener('click', async () => {
-  if (!play?.over || game) return;
+// A finished game against the AI becomes a game record once; the game review (GPU) and the joseki review (CPU)
+// then run each on their own button
+async function ensureGame() {
+  if (game) return true;
   try {
     await saveNow();
     const j = await apiJson(`api/sessions/${session.id}/play/review`, { method: 'POST', body: { moves: gameMoves() } });
     game = j.game;
     showReview(j.review);
+    showJoseki(null);
     render();
     loadSessions();
-    $('reviewBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    runReview();
-  } catch (err) { setStatus('err', 'Chưa review được: ' + esc(err.message)); }
+    return true;
+  } catch (err) { setStatus('err', 'Chưa review được: ' + esc(err.message)); return false; }
+}
+$('vsReview').addEventListener('click', async () => {
+  if (!play?.over || !await ensureGame()) return;
+  $('reviewBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (reviewData?.status !== 'done') runReview();
+});
+$('vsJoseki').addEventListener('click', async () => {
+  if (!play?.over || !await ensureGame()) return;
+  $('josekiBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (josekiData?.status !== 'done') runJoseki();
 });
 
 // The position for KataGo with its history (ko), as the coach sends it; a pass of the side not to move is added

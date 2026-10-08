@@ -197,19 +197,18 @@ def _finish(game, review):
                           'winrate_before': p[str(i)][0], 'winrate_after': round(1 - p[str(i + 1)][0], 4),
                           'best': d['best'], 'line': d['line']})
         review['mistakes'][who] = sorted(found, key=lambda m: -m['loss'])[:MISTAKES]
-    review['opening'] = opening_review(game, review)
-    review['opening_version'] = OPENING_VERSION
     review.update(status='done', phase='done', finished_at=time.time())
 
 
-# ---- the opening against KataGo's joseki (joseki.py): each corner's moves (those in its quarter of the board, during
-# the first OPENING_MOVES) are followed in KataGo's joseki tree, turned to its top-right corner (and across the
-# corner's diagonal), until the game leaves the tree (often with a move KataGo finds fine) or a tenuki breaks the
-# corner's sequence. A corner with a costly move (OPENING_LOSS or more) gets the joseki from where the game left the
-# tree: the tree's best move there, then its main line until the joseki ends. ----
+# ---- the joseki review, apart from the game's review and on the VM's CPU KataGo: each corner's moves (those in its
+# quarter of the board, during the first OPENING_MOVES) are followed in KataGo's joseki tree (joseki.py), turned to its
+# top-right corner (and across the corner's diagonal), until the game leaves the tree or a tenuki breaks the corner's
+# sequence before the joseki ended. From where it left, the corner's moves are searched (SCAN_VISITS each) for their
+# loss; the review lists every corner that left the joseki: the move that left it, the first costly move after it
+# (OPENING_LOSS or more) if any, and the joseki to play from there (the tree's best move, then its main line). ----
 OPENING_MOVES = 40
 OPENING_LOSS = 1.0
-OPENING_VERSION = 2   # reviews with another version get their opening review again
+CORNER_MOVES = 8      # moves of a corner searched from where it left the joseki
 CORNERS = (('trên-phải', False, False), ('trên-trái', False, True), ('dưới-phải', True, False), ('dưới-trái', True, True))
 JOSEKI_LINE = 10
 
@@ -225,27 +224,25 @@ def _quarter(rc, n=19):
     return next(i for i, (_, fr, fc) in enumerate(CORNERS) if fr != top and fc != right)
 
 
-def opening_review(game, review, nodes=None):
-    """Corners with a costly opening move -> [{number, color, move, loss (the costly move), corner, left (move number
-    where the game left the joseki), left_move, left_color, left_loss, joseki: [[color, move]…] from there, ends,
-    tenuki (the joseki was over there: play elsewhere), played_rating, known (joseki moves the corner followed)}]"""
+def _tree_nodes():
+    import json
     import joseki
-    if game['board_size'] != 19 or any(v for row in game['base'] for v in row):
+    f = joseki.load()
+    return json.loads(f.read_text())['nodes'] if f else None
+
+
+def corner_walks(game, nodes):
+    """Each corner that left the joseki: {name, fr, fc, diag, seq (tree moves followed), left: (index, colour, move,
+    tree move), after: [indices of the corner's moves from there]}."""
+    import joseki
+    if game['board_size'] != 19 or any(v for row in game['base'] for v in row) or not nodes:
         return []
-    if nodes is None:
-        f = joseki.load()
-        if f is None:
-            return []
-        import json
-        nodes = json.loads(f.read_text())['nodes']
-    moves, pos, out = game['moves'], review['positions'], []
-    loss = lambda i: _loss(review, i) if str(i) in pos and str(i + 1) in pos else 0.0
+    moves, out = game['moves'], []
     for ci, (name, fr, fc) in enumerate(CORNERS):
         turn = lambda p: joseki.gtp(*_turn(coach.parse_point(p, 19), fr, fc))
         corner = [(i, w, m) for i, (w, m) in enumerate(moves[:OPENING_MOVES])
                   if m != 'pass' and _quarter(coach.parse_point(m, 19)) == ci]
-        costly = [(i, w, m) for i, w, m in corner if loss(i) >= OPENING_LOSS]
-        if len(corner) < 2 or not costly:
+        if len(corner) < 2:
             continue
         for diag in (False, True):   # the side of the diagonal the game's first corner move matches
             first = joseki.mirror(turn(corner[0][2])) if diag else turn(corner[0][2])
@@ -260,18 +257,41 @@ def opening_review(game, review, nodes=None):
                     k['move'] == t for k in nodes[' '.join(seq)].get('next', []) if not k.get('tenuki')):
                 seq.append(t)
                 continue
-            left = (i, w, m, t, w == w0)
+            if w == w0 and not nodes.get(' '.join(seq), {}).get('settled'):
+                break                # a tenuki broke the corner before the joseki ended: nothing to compare
+            left = (i, w, m, t)
             break
-        if left is None or left[4] and not nodes.get(' '.join(seq), {}).get('settled'):
-            continue                 # never left the joseki, or a tenuki broke the corner before the joseki ended
-        i, w, m, t, _ = left
-        bad = next(((j, ww, mm) for j, ww, mm in costly if j >= i), None)
-        if bad is None:
-            continue                 # the costly moves came before the joseki was left: they are joseki moves
-        node = nodes[' '.join(seq)]
+        if left:
+            out.append({'name': name, 'fr': fr, 'fc': fc, 'diag': diag, 'seq': seq, 'left': left,
+                        'after': [i for i, _, _ in corner if i >= left[0]][:CORNER_MOVES]})
+    return out
+
+
+def joseki_needs(game, nodes):
+    """Positions (indices before a move) the joseki review searches."""
+    need = set()
+    for c in corner_walks(game, nodes):
+        for i in c['after']:
+            need |= {i, i + 1}
+    return sorted(i for i in need if i <= len(game['moves']))
+
+
+def joseki_results(game, positions, nodes):
+    """The joseki review from the corners' searched positions -> [{corner, left, left_color, left_move, left_loss,
+    number, color, move, loss (the first costly move from there, or None), joseki: [[colour, move]…], ends, tenuki,
+    played_rating, known}], in move order."""
+    import joseki
+    review = {'positions': positions}
+    loss = lambda i: _loss(review, i) if str(i) in positions and str(i + 1) in positions else None
+    out = []
+    for c in corner_walks(game, nodes):
+        i, w, m, t = c['left']
+        node = nodes[' '.join(c['seq'])]
         kids = [k for k in node.get('next', []) if not k.get('tenuki')]
-        back = lambda mv: coach.gtp(*_turn(joseki.rc(joseki.mirror(mv) if diag else mv), fr, fc), 19)
-        line, key = [], ' '.join(seq)
+        if kids and kids[0]['move'] == t:
+            continue
+        back = lambda mv: coach.gtp(*_turn(joseki.rc(joseki.mirror(mv) if c['diag'] else mv), c['fr'], c['fc']), 19)
+        line, key = [], ' '.join(c['seq'])
         for _ in range(JOSEKI_LINE):
             n = nodes.get(key)
             nxt = [k for k in (n or {}).get('next', []) if not k.get('tenuki')]
@@ -280,13 +300,41 @@ def opening_review(game, review, nodes=None):
             line.append(nxt[0]['move'])
             key += ' ' + nxt[0]['move']
         colors = [w if k % 2 == 0 else coach.OTHER[w] for k in range(len(line))]
+        bad = next((j for j in c['after'] if (loss(j) or 0) >= OPENING_LOSS), None)
         mine = next((k for k in kids if k['move'] == t), None)
-        out.append({'number': bad[0] + 1, 'color': bad[1], 'move': bad[2], 'loss': round(loss(bad[0]), 1), 'corner': name,
-                    'left': i + 1, 'left_move': m, 'left_color': w, 'left_loss': round(loss(i), 1),
-                    'joseki': [[c, back(x)] for c, x in zip(colors, line)],
+        out.append({'corner': c['name'], 'left': i + 1, 'left_color': w, 'left_move': m,
+                    'left_loss': None if loss(i) is None else round(loss(i), 1),
+                    'number': None if bad is None else bad + 1, 'color': None if bad is None else game['moves'][bad][0],
+                    'move': None if bad is None else game['moves'][bad][1],
+                    'loss': None if bad is None else round(loss(bad), 1),
+                    'joseki': [[col, back(x)] for col, x in zip(colors, line)],
                     'ends': bool(nodes.get(key, {}).get('settled')), 'tenuki': bool(node.get('settled')) and not line,
-                    'played_rating': mine and mine['rating'], 'known': len(seq)})
-    return sorted(out, key=lambda o: o['number'])
+                    'played_rating': mine and mine['rating'], 'known': len(c['seq'])})
+    return sorted(out, key=lambda o: o['left'])
+
+
+def new_joseki_review(game, nodes=None):
+    nodes = nodes if nodes is not None else _tree_nodes()
+    return {'status': 'running', 'need': joseki_needs(game, nodes), 'positions': {}, 'results': None}
+
+
+def joseki_step(game, jr, katago, seconds=STEP_SECONDS, nodes=None):
+    """Up to `seconds` of searches for the joseki review (katago: the CPU's), then its results."""
+    end = time.time() + seconds
+    for i in jr['need']:
+        if time.time() >= end:
+            break
+        if str(i) not in jr['positions']:
+            jr['positions'][str(i)] = _scan(katago, game, i)
+    if all(str(i) in jr['positions'] for i in jr['need']):
+        nodes = nodes if nodes is not None else _tree_nodes()
+        jr.update(status='done', results=joseki_results(game, jr['positions'], nodes))
+    return jr
+
+
+def joseki_progress(jr):
+    return None if not jr else {'status': jr['status'], 'done': sum(str(i) in jr['positions'] for i in jr['need']),
+                                'total': len(jr['need']), 'results': jr.get('results')}
 
 
 def step(game, review, katago, seconds=STEP_SECONDS, peek=None):
@@ -318,5 +366,5 @@ def progress(review):
     if not review:
         return None
     deep_total = sum(len(v) for v in review.get('candidates', {}).values())
-    return {k: review.get(k) for k in ('status', 'phase', 'total', 'done', 'mistakes', 'opening')} | \
+    return {k: review.get(k) for k in ('status', 'phase', 'total', 'done', 'mistakes')} | \
         {'deep_done': len(review.get('deep', {})), 'deep_total': deep_total}

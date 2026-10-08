@@ -175,37 +175,45 @@ def test_review_of_a_game_against_the_ai_uses_what_was_searched(storage):
     assert all(kgcache.key({**review.position(game, int(i)), **coach.ROOT}) in known for i in r['deep'])
 
 
-def test_opening_mistake_gets_the_joseki_in_its_own_corner():
-    # the joseki tree (top-right corner): 4-4, 3-3 invasion, block, hane … ends
-    nodes = {
-        'Q16': {'settled': False, 'next': [{'move': 'R17', 'rating': 'best'}]},
-        'Q16 R17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}, {'move': 'Q17', 'rating': 'best'}]},
-        'Q16 R17 R16': {'settled': False, 'next': [{'move': 'Q17', 'rating': 'best'}]},
-        'Q16 R17 Q17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}]},
-        'Q16 R17 R16 Q17': {'settled': False, 'next': [{'move': 'P16', 'rating': 'best'}]},
-        'Q16 R17 R16 Q17 P16': {'settled': False, 'next': [{'move': 'O18', 'rating': 'best'}]},
-        'Q16 R17 R16 Q17 P16 O18': {'settled': True, 'next': []},
-    }
-    # the bottom-left: Black 4-4 (D4), White 3-3 (C3), Black blocks right (C4), White wrongly at E3 instead of D3;
-    # moves elsewhere in between do not break the corner's sequence
-    moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'E3'], ['B', 'K10']]
+JOSEKI_NODES = {   # top-right corner: 4-4, 3-3 invasion, block, hane … ends
+    'Q16': {'settled': False, 'next': [{'move': 'R17', 'rating': 'best'}]},
+    'Q16 R17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}, {'move': 'Q17', 'rating': 'best'}]},
+    'Q16 R17 R16': {'settled': False, 'next': [{'move': 'Q17', 'rating': 'best'}]},
+    'Q16 R17 Q17': {'settled': False, 'next': [{'move': 'R16', 'rating': 'best'}]},
+    'Q16 R17 R16 Q17': {'settled': False, 'next': [{'move': 'P16', 'rating': 'best'}]},
+    'Q16 R17 R16 Q17 P16': {'settled': False, 'next': [{'move': 'O18', 'rating': 'best'}]},
+    'Q16 R17 R16 Q17 P16 O18': {'settled': True, 'next': []},
+}
+
+
+def test_joseki_review_on_the_cpu_lists_where_corners_left_the_joseki():
+    # bottom-left: Black 4-4 (D4), White 3-3 (C3), Black blocks (C4), White leaves the joseki with F3 (not D3),
+    # then plays D3 too late; moves elsewhere in between do not break the corner's sequence
+    moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'F3'], ['B', 'K4'], ['W', 'D3'],
+             ['B', 'J3']]   # K4: Black twice in the bottom-right (a tenuki there), nothing to compare
     game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
-    pos = {str(i): [0.5, 0.0, None, 0.0, 0.0] for i in range(8)}
-    pos['5'] = [0.5, 0.0, None, 3.0, -3.0]                       # E3 loses 6 points
-    out = review.opening_review(game, {'positions': pos}, nodes)
-    assert len(out) == 1
-    o = out[0]
-    assert o['number'] == 6 and o['left'] == 6 and o['corner'] == 'dưới-trái' and o['known'] == 3
+    need = review.joseki_needs(game, JOSEKI_NODES)
+    assert need and min(need) == 5            # searched from where the corner left the joseki (move 6)
+    asked = []
+
+    def cpu(p):
+        asked.append(p)
+        assert p.get('max_visits') == review.SCAN_VISITS
+        i = len(p['moves'])
+        lead = 2.0 if i == 7 else 0.0           # W D3 at move 8 gives 4 points away
+        return {'winrate': 0.5, 'score_lead': -lead if i == 8 else lead,
+                'moves': [{'move': 'A1', 'score_lead': lead, 'visits': 50}]}
+    jr = review.new_joseki_review(game, JOSEKI_NODES)
+    while jr['status'] != 'done':
+        jr = review.joseki_step(game, jr, cpu, nodes=JOSEKI_NODES)
+    assert len(asked) == len(need)
+    (o,) = jr['results']
+    assert o['corner'] == 'dưới-trái' and o['left'] == 6 and o['left_move'] == 'F3' and o['known'] == 3
+    assert o['number'] == 8 and o['move'] == 'D3' and o['loss'] >= 1
     assert o['joseki'][0] == ['W', 'D3'] and [c for c, _ in o['joseki']] == ['W', 'B', 'W']
-    # leaving the joseki with a fine move, then a costly one later: the joseki from where the game left it
-    later = moves[:5] + [['W', 'F3'], ['B', 'Q10'], ['W', 'D3'], ['B', 'K10']]
-    game2 = review.game_from_moves([[0] * 19 for _ in range(19)], later, 6.5, 'a', 'b')
-    pos2 = {str(i): [0.5, 0.0, None, 0.0, 0.0] for i in range(10)}
-    pos2['7'] = [0.5, 0.0, None, 2.0, -2.0]                       # W D3 at move 8 loses 4 points
-    o = review.opening_review(game2, {'positions': pos2}, nodes)[0]
-    assert o['number'] == 8 and o['left'] == 6 and o['left_move'] == 'F3' and o['joseki'][0] == ['W', 'D3']
-    # following the joseki is never reported, however much a move cost on the whole board
+    assert review.joseki_progress(jr)['done'] == len(need)
+    # following the joseki: nothing to report
     good = review.game_from_moves([[0] * 19 for _ in range(19)],
                                   [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'D3']], 6.5, 'a', 'b')
-    assert review.opening_review(good, {'positions': pos}, nodes) == []
+    assert review.joseki_needs(good, JOSEKI_NODES) == [] and review.joseki_results(good, {}, JOSEKI_NODES) == []
     assert review._quarter((9, 9)) == 0 and review._quarter((18, 0)) == 3

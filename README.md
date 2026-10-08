@@ -46,9 +46,12 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   tốt nhất 10 nước (`review.py`; chạy theo từng đợt ~20 s do trang web gọi). Chạm số trên biến (hoặc ▶) để đi tiếp
   theo biến: cửa sổ 10 nước trượt theo, biến được KataGo tính thêm từng đợt 10 nước khi chỉ còn ≤ 15 nước đã tính
   phía trước (`POST /api/sessions/{id}/review/line`) và lưu cùng lỗi đó.
-  Danh sách lỗi nằm ngay trên bàn cờ, theo thứ tự nước đi (cả hai bên hoặc từng bên). Phần **📘 Khai cuộc**
-  (`review.opening_review`): nước mất ≥ 1 điểm ở góc trong 40 nước đầu được so với cây định thức của KataGo (mỗi góc
-  được lật về góc trên-phải, thử cả hai phía đường chéo) và nhận định thức nên đi thay, xem được ngay trên bàn.
+  Danh sách lỗi nằm ngay trên bàn cờ, theo thứ tự nước đi (cả hai bên hoặc từng bên), 3 mục một lần.
+- Review định thức (📘, riêng với review ván, luôn trên KataGo CPU của VM: `POST /api/sessions/{id}/joseki/step`,
+  `review.joseki_step`): mỗi góc trong 40 nước đầu được dò trong cây định thức (lật về góc trên-phải, thử cả hai phía
+  đường chéo) tới chỗ rời định thức; các nước của góc từ đó được KataGo CPU đánh giá (100 lượt); kết quả: nước rời
+  định thức, nước sai đầu tiên sau đó và định thức nên đi, xem được trên bàn (biến kéo dài cũng trên CPU). Mọi thứ về
+  định thức (dựng cây, đào sâu, review, biến trên bàn) chạy trên CPU, không tốn GPU Modal.
 - AI: chuỗi model miễn phí có dự phòng (Gemini → Groq → OpenRouter → Mistral), xem
   [deploy/LLM_PROVIDERS.md](deploy/LLM_PROVIDERS.md).
 - KataGo hai tầng: GPU Modal là chính; KataGo CPU trên chính VM (`katago` trong compose, ~18 lượt/s) chạy các ván

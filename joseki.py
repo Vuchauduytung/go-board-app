@@ -9,7 +9,7 @@ whole board's best. Past the first FREE moves the joseki ends when tenuki is the
 corner move loses SETTLED points or more next to it: nothing in the corner is urgent any more. Lines closest to the
 best corner move are grown first, so the main lines reach their end within the budget. Moves mirrored across the corner's diagonal from a symmetric position are kept once.
 
-    python -m joseki build [--nodes 2500] [--visits 500]   # on the server: KataGo searches, writes JOSEKI_PATH
+    python -m joseki build [--nodes 2500] [--visits 500] [--url http://katago:8080]   # writes JOSEKI_PATH
     python -m joseki deepen --url http://KATAGO [--max-depth 50]   # grow the built tree, see deepen()
 """
 import argparse
@@ -306,7 +306,8 @@ def main():
     ap.add_argument('cmd', choices=['build', 'deepen'])
     ap.add_argument('--nodes', type=int, default=2500)
     ap.add_argument('--visits', type=int, default=500)
-    ap.add_argument('--url', help='deepen: a KataGo service (katago_server.py), e.g. the VM\'s CPU one')
+    ap.add_argument('--url', default=os.environ.get('KATAGO_CPU_URL', 'http://katago:8080'),
+                    help='a KataGo service (katago_server.py): everything about joseki runs on the VM\'s CPU one')
     ap.add_argument('--max-depth', type=int, default=DEEP_DEPTH)
     ap.add_argument('--hours', type=float)
     args = ap.parse_args()
@@ -319,14 +320,8 @@ def main():
                hours=args.hours, log=lambda s: print(s, file=sys.stderr, flush=True))
         print(f'{len(tree["nodes"])} positions -> {PATH}')
         return
-    import usage
-    usage.SOURCE = 'joseki'   # its Modal GPU time goes into the admins' report (usage.py)
-    usage.start(None)
-    from app import _katago
-    try:
-        tree = build(_katago, args.nodes, args.visits, log=lambda s: print(s, file=sys.stderr, flush=True))
-    finally:
-        usage.flush()
+    tree = build(http_katago(args.url), args.nodes, args.visits, parallel=1,
+                 log=lambda s: print(s, file=sys.stderr, flush=True))
     PATH.parent.mkdir(parents=True, exist_ok=True)
     PATH.write_text(json.dumps(tree, separators=(',', ':')))
     print(f'{len(tree["nodes"])} positions -> {PATH}')

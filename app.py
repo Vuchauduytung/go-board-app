@@ -734,23 +734,11 @@ def create_session(s: SessionIn, user: str = Depends(current_user)):
     return sessions.create(user, {**fields, 'board_size': len(s.base)})
 
 
-def _fresh_opening(user, sid, s):
-    """The session's review, its opening review made again when it is older than the current one."""
-    r = s.get('review')
-    if s.get('game') and r and r.get('status') == 'done' and r.get('opening_version') != review.OPENING_VERSION:
-        r['opening'] = review.opening_review(s['game'], r)
-        r['opening_version'] = review.OPENING_VERSION
-        sessions.set_review(user, sid, r)
-    return r
-
-
 @app.get('/api/sessions/{sid}')
 def get_session(sid: str, user: str = Depends(current_user)):
     s = sessions.get(user, sid)
     if s is None:
         raise HTTPException(404, 'Không tìm thấy ván này')
-    if s.get('review'):
-        s['review'] = _fresh_opening(user, sid, s)
     return s
 
 
@@ -810,7 +798,7 @@ def review_step(sid: str, user: str = Depends(current_user)):
     s = _own_session(user, sid)
     if not s.get('game'):
         raise HTTPException(400, 'Ván này không có kỷ lục SGF để review')
-    r = _fresh_opening(user, sid, s) or review.new_review(s['game'])
+    r = s.get('review') or review.new_review(s['game'])
     if r['status'] != 'done':
         try:
             r = review.step(s['game'], r, _katago_for(user, sid), peek=lambda p: kgcache.lookup(p, (user, sid)))
@@ -821,6 +809,27 @@ def review_step(sid: str, user: str = Depends(current_user)):
         finally:
             sessions.set_review(user, sid, r)   # keep what was done, also when stopped by an error
     return review.progress(r)
+
+
+@app.post('/api/sessions/{sid}/joseki/step')
+def joseki_review_step(sid: str, user: str = Depends(current_user)):
+    """Some more of the joseki review (review.joseki_step: ~20 s of searches, always on the VM's CPU KataGo, apart
+    from the game's review); call again until status is "done"."""
+    s = _own_session(user, sid)
+    if not s.get('game'):
+        raise HTTPException(400, 'Ván này chưa có kỷ lục để review')
+    jr = s.get('joseki_review') or review.new_joseki_review(s['game'])
+    if jr['status'] != 'done':
+        cpu = _katago_for(user, sid)
+        try:
+            jr = review.joseki_step(s['game'], jr, lambda p: cpu({**p, 'engine': 'cpu'}))
+        except QuotaExceeded as ex:
+            raise HTTPException(429, str(ex))
+        except KataGoError as ex:
+            raise HTTPException(ex.status, str(ex))
+        finally:
+            sessions.set_joseki_review(user, sid, jr)
+    return review.joseki_progress(jr)
 
 
 class LineIn(BaseModel):
@@ -947,6 +956,7 @@ class BestLineIn(BaseModel):
     line: List[str] = []      # moves known so far ("Q16" | "pass")
     count: int = 10
     session_id: Optional[str] = None
+    engine: Optional[str] = None   # "cpu": a joseki line, searched on the VM's CPU
 
 
 @app.post('/api/line')
@@ -958,7 +968,7 @@ def best_line(body: BestLineIn, user: str = Depends(current_user)):
     n = len(body.matrix)
     if len(body.line) >= review.LINE_MAX or any(mv != 'pass' and coach.parse_point(mv, n) is None for mv in body.line):
         raise HTTPException(400, 'Biến không hợp lệ')
-    base = {'matrix': body.matrix, 'to_play': body.to_play, 'komi': body.komi}
+    base = {'matrix': body.matrix, 'to_play': body.to_play, 'komi': body.komi, **({'engine': 'cpu'} if body.engine == 'cpu' else {})}
     try:
         more = review.extend_from(_katago_for(user, body.session_id), base, body.to_play, body.line,
                                   max(1, min(body.count, 20)))
