@@ -228,7 +228,7 @@ def deepen(katago, tree, max_depth=DEEP_DEPTH, visits=200, whole_visits=60, save
     heap, counter = [], 0
     for key, node in nodes.items():
         depth = len(key.split())
-        if depth >= max_depth or node.get('done'):
+        if depth >= max_depth or node.get('done') or node.get('failed'):
             continue
         if depth <= WIDE_DEPTH:                                     # the widened first moves: every branch is a line
             for k in node.get('next', [])[1:]:
@@ -249,7 +249,18 @@ def deepen(katago, tree, max_depth=DEEP_DEPTH, visits=200, whole_visits=60, save
         key = ' '.join(moves)
         if key in nodes and not again:
             continue
-        res, corner_res = search_deep(katago, moves, visits, whole_visits)
+        try:
+            res, corner_res = search_deep(katago, moves, visits, whole_visits)
+        except Exception as ex:          # a query KataGo failed: once more, then the line ends here (logged)
+            log(f'search failed at {key!r}: {ex}; retrying in 30 s')
+            time.sleep(30)
+            try:
+                res, corner_res = search_deep(katago, moves, visits, whole_visits)
+            except Exception as ex2:
+                log(f'search failed again at {key!r}: {ex2}; this line ends here')
+                nodes[key] = {**nodes.get(key, {}), 'settled': True, 'next': nodes.get(key, {}).get('next', []) if again else [],
+                              'failed': True}
+                continue
         kids, tenuki, settled, finished = _expand(res, corner_res, moves, built)
         nodes[key] = {**nodes.get(key, {}), 'winrate': res['winrate'], 'score_lead': res['score_lead'], 'tenuki': tenuki,
                       'settled': settled, 'next': kids, **({'done': True} if finished else {})}

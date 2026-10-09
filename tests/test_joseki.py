@@ -60,3 +60,19 @@ def test_widen_adds_the_common_first_moves_once():
     assert tree['widened'] and len(kids) > before and len(kids) <= joseki.WIDE_WIDTH
     assert any(k.get('wide') for k in kids) and len({k['move'] for k in kids}) == len(kids)
     assert all(k['delta'] <= joseki.WIDE_BRANCH for k in kids if k.get('wide'))
+
+
+def test_deepen_goes_on_when_a_search_fails():
+    tree = joseki.build(fake_katago, max_nodes=20, parallel=2, log=lambda s: None)
+    calls = {'n': 0}
+
+    def flaky(p):
+        calls['n'] += 1
+        if calls['n'] in (3, 4, 5, 6):            # one position fails twice (two searches each try)
+            raise RuntimeError('HTTP Error 500')
+        return fake_katago(p)
+    import unittest.mock
+    with unittest.mock.patch.object(joseki.time, 'sleep', lambda s: None):
+        joseki.deepen(flaky, tree, max_depth=10, log=lambda s: None)
+    assert any(n.get('failed') for n in tree['nodes'].values())
+    assert calls['n'] > 10                        # it went on with the other lines
