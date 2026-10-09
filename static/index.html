@@ -1168,7 +1168,6 @@ async function loadSessions() {
 async function openSession(id) {
   await saveNow();   // the board being left keeps its last changes
   const s = await apiJson(`api/sessions/${id}`);
-  fetch('api/katago/warmup', { method: 'POST' }).catch(() => {});
   startBoard({ id: s.scan_id, board_size: s.board_size, matrix: s.base });
   session = { id: s.id, title: s.title, pinned: s.pinned };
   game = s.game || null;
@@ -2765,7 +2764,8 @@ $('reviewList').addEventListener('click', async e => {
 
 // The board is always there: enter a game move by move, or photograph a position
 emptyBoard(+$('size').value);
-fetch('api/katago/warmup', { method: 'POST' }).catch(() => {});   // wake a scaled-to-zero KataGo GPU early
+// No GPU warm-up on opening the page or a game: the GPU starts only for an analysis of moves (💡 Gợi ý, the game
+// review, the coach), never for joseki, games against the AI or counting, which all run on the server's CPU
 apiJson('api/me').then(showMe).catch(() => {});
 loadSessions();
 </script>

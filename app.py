@@ -904,6 +904,9 @@ class ScoreIn(BaseModel):
     session_id: Optional[str] = None
 
 
+SCORE_VISITS = 200   # ~11 s on the CPU; enough for the ownership of a finished game
+
+
 @app.post('/api/score')
 def score_game(body: ScoreIn, user: str = Depends(current_user)):
     """Counting at the end of a game: KataGo's ownership finds the dead stones, the player can flip groups."""
@@ -915,9 +918,11 @@ def score_game(body: ScoreIn, user: str = Depends(current_user)):
         raise HTTPException(400, 'Nước đi không hợp lệ')
     if len(body.toggles) > n * n or any(len(t) != 2 or not (0 <= t[0] < n and 0 <= t[1] < n) for t in body.toggles):
         raise HTTPException(400, 'Điểm không hợp lệ')
-    payload = {'matrix': body.matrix, 'to_play': body.to_play, 'moves': body.moves, 'komi': body.komi, **coach.ROOT}
+    # a game's end, like the game itself, on the VM's CPU (the GPU is only for analysing moves)
+    payload = {'matrix': body.matrix, 'to_play': body.to_play, 'moves': body.moves, 'komi': body.komi,
+               'top': 5, 'ownership': True, 'max_visits': SCORE_VISITS, 'engine': 'cpu'}
     try:
-        res = _katago_for(user, body.session_id)(payload)   # the very search the game made of this position
+        res = _katago_for(user, body.session_id)(payload)
     except QuotaExceeded as ex:
         raise HTTPException(429, str(ex))
     except KataGoError as ex:
