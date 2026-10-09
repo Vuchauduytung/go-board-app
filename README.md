@@ -25,7 +25,10 @@ Mobile web app: chụp ảnh bàn cờ vây → ma trận NxN (0 trống, 1 đen
   tính trước theo đợt qua `POST /api/line`). Chạm một ứng viên của 💡 Gợi ý hoặc mở một lỗi của review là tự sang 🤖.
 - Hỏi bằng giọng nói (nhận giọng trong trình duyệt, dự phòng `/api/stt`), nghe trả lời bằng giọng tiếng Việt do server
   tạo (`tts.py`: Microsoft HoaiMy qua edge-tts, dự phòng Google; giọng của máy chỉ khi server lỗi).
-- Đánh với AI (🤖 Đánh với AI): cấp 5k–5d. Mỗi lượt KataGo tìm ~40 ứng viên, AI rút một nước sao cho trung bình mất
+- Đánh với AI (🤖 Đánh với AI): cấp 5k–5d. Cấp kyu (5k–1k) đánh khai cuộc theo định thức trong 40 nước đầu
+  (`bot.joseki_move`: chiếm góc trống bằng điểm định thức, đáp các nước áp sát / đả vào góc của mình theo cây định
+  thức, nhánh tốt nhất thường hơn); rời định thức hoặc hết định thức thì chọn theo cấp như dưới đây. Cấp dan luôn
+  chọn theo KataGo. Mỗi lượt KataGo tìm ~40 ứng viên, AI rút một nước sao cho trung bình mất
   đúng số điểm của cấp đó (`bot.py`, bảng `LEVELS` = điểm mất trung bình mỗi nước, điểm mất tối đa một nước; chỉnh ở
   đó hoặc qua biến `BOT_LEVELS`; nước KataGo chỉ xem qua 1–2 lượt bị tính là mất thêm `UNSURE / √lượt`). Thanh ván
   đấu hiện điểm mất trung bình mỗi nước của AI và của người chơi để hiệu chỉnh; bỏ lượt, đi lại, xin thua. Hết ván

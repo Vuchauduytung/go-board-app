@@ -892,6 +892,15 @@ def play_move(body: PlayIn, user: str = Depends(current_user)):
         return {'score_lead': res['score_lead'], 'best_lead': bot.best(res)['score_lead'] if res['moves'] else None}
     out = bot.choose(res, body.level, opponent_passed=body.opponent_passed)
     out['resign'] = bot.should_resign(res, len(body.moves))
+    # the kyu levels play joseki in the opening (bot.joseki_move), when the game started on an empty board
+    if body.level.endswith('k') and not body.opponent_passed and not any(v for row in body.matrix for v in row) and n == 19:
+        mv = bot.joseki_move(body.moves)
+        if mv:
+            known = next((m for m in res['moves'] if m['move'] == mv), None)
+            best = out['best_lead']
+            out.update(move=mv, joseki=True, alternatives=[out['move']] + out['alternatives'],
+                       loss=round(max(0.0, best - known['score_lead']), 2) if known and best is not None else None,
+                       chosen_lead=known['score_lead'] if known else out.get('chosen_lead'))
     return out
 
 

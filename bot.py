@@ -19,9 +19,11 @@ import random
 
 import coach
 
+# Third table (2026-10-09): with the second one 5k played like a real 1k, so 1.5 points a move is 1k now, and the
+# kyu levels are further apart.
 LEVELS = {
-    '5k': (1.5, 15), '4k': (1.35, 13), '3k': (1.2, 11), '2k': (1.05, 9.5), '1k': (0.92, 8),
-    '1d': (0.8, 7), '2d': (0.68, 6), '3d': (0.57, 5), '4d': (0.47, 4), '5d': (0.38, 3),
+    '5k': (2.5, 18), '4k': (2.25, 16), '3k': (2.0, 14), '2k': (1.75, 12), '1k': (1.5, 10),
+    '1d': (1.3, 8), '2d': (1.1, 6.5), '3d': (0.9, 5), '4d': (0.7, 4), '5d': (0.5, 3),
 }
 LEVELS.update({k: tuple(v) for k, v in json.loads(os.environ.get('BOT_LEVELS') or '{}').items()})
 UNSURE = 1.5        # points added to the loss of a move searched once (less for more visits, see above)
@@ -88,3 +90,78 @@ def choose(res, level, rnd=random, opponent_passed=False):
 
 def should_resign(res, move_number):
     return move_number >= RESIGN_AFTER and res['winrate'] < RESIGN_WINRATE
+
+
+# ---- the kyu levels (1k–5k) play joseki in the opening, as players of that strength learn them: an empty corner gets a
+# joseki starting point, a corner whose moves are still in KataGo's joseki tree (joseki.py) gets one of the tree's
+# branches (best ones more often); once the corner leaves the tree, or the joseki is over, the level's usual choice
+# takes over. The dan levels always choose by KataGo. ----
+JOSEKI_UNTIL = 40                                    # moves of the opening
+START_WEIGHTS = {'Q16': 4, 'R16': 4, 'R17': 1, 'Q15': 1, 'R15': 1}   # 4-4 and 3-4 mostly
+RATING_WEIGHTS = {'best': 4, 'good': 2, 'ok': 1}
+EMPTY_CORNER_UNTIL = 12                              # empty corners are taken during the first moves only
+
+
+def _joseki_nodes():
+    """KataGo's joseki tree, read again only when its file changes (it grows while being deepened)."""
+    import joseki
+    f = joseki.load()
+    if f is None:
+        return None
+    stamp = f.stat().st_mtime
+    if _joseki_cache.get('stamp') != stamp:
+        _joseki_cache.update(stamp=stamp, nodes=json.loads(f.read_text())['nodes'])
+    return _joseki_cache['nodes']
+
+
+_joseki_cache = {}
+
+
+def joseki_move(moves, rnd=random, nodes=None):
+    """A joseki move for the side to move after `moves` ([["B", "Q16" | "pass"]…] on an empty 19×19), or None."""
+    import joseki
+    import review
+    if len(moves) >= JOSEKI_UNTIL:
+        return None
+    nodes = nodes if nodes is not None else _joseki_nodes()
+    if not nodes:
+        return None
+    board, _, _ = coach.final_position([[0] * 19 for _ in range(19)], 'B', moves)
+    placed = [(w, m) for w, m in moves if m != 'pass']
+    empty = lambda mv: not board[coach.parse_point(mv, 19)[0]][coach.parse_point(mv, 19)[1]]
+
+    def pick(weighted):
+        weighted = [(mv, w) for mv, w in weighted if empty(mv)]
+        return rnd.choices([mv for mv, _ in weighted], weights=[w for _, w in weighted])[0] if weighted else None
+
+    me = 'W' if moves and moves[-1][0] == 'B' else 'B'
+    quarter = lambda m: review._quarter(coach.parse_point(m, 19))
+    free = [ci for ci in range(4) if not any(quarter(m) == ci for _, m in placed)]
+    early = len(placed) < EMPTY_CORNER_UNTIL
+    # the corner the opponent has just played in, while its moves follow the tree; a corner the opponent has just
+    # taken (no stone of ours there) waits while empty corners are left, as players take those first
+    last_corner = quarter(moves[-1][1]) if placed and moves[-1][1] != 'pass' else None
+    ours_there = last_corner is not None and any(w == me and quarter(m) == last_corner for w, m in placed)
+    if last_corner is not None and (ours_there or not (early and free)):
+        ci = review._quarter(coach.parse_point(moves[-1][1], 19))
+        name, fr, fc = review.CORNERS[ci]
+        turn = lambda p: joseki.gtp(*review._turn(coach.parse_point(p, 19), fr, fc))
+        back = lambda p, diag: coach.gtp(*review._turn(joseki.rc(joseki.mirror(p) if diag else p), fr, fc), 19)
+        corner = [(w, m) for w, m in placed if review._quarter(coach.parse_point(m, 19)) == ci]
+        if all(a[0] != b[0] for a, b in zip(corner, corner[1:])):
+            for diag in (False, True):
+                key = ' '.join(joseki.mirror(turn(m)) if diag else turn(m) for _, m in corner)
+                node = nodes.get(key)
+                if node and not node.get('settled'):
+                    kids = [k for k in node.get('next', []) if not k.get('tenuki')]
+                    mv = pick([(back(k['move'], diag), RATING_WEIGHTS.get(k['rating'], 1)) for k in kids])
+                    if mv:
+                        return mv
+    # an empty corner during the first moves: a joseki starting point
+    if early:
+        if free:
+            name, fr, fc = review.CORNERS[rnd.choice(free)]
+            diag = rnd.random() < 0.5
+            return pick([(coach.gtp(*review._turn(joseki.rc(joseki.mirror(m) if diag else m), fr, fc), 19), w)
+                         for m, w in START_WEIGHTS.items()])
+    return None

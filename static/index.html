@@ -1703,9 +1703,9 @@ async function aiMove() {
     }
     if (!done || done === 'pass') { aiPass(); return; }
     g.passes = 0;
-    if (done === j.move) g.ai_losses.push(j.loss);
+    if (done === j.move && j.loss != null) g.ai_losses.push(j.loss);   // a joseki move KataGo did not list: no loss
     g.expect = { len: played.length, lead: j.chosen_lead };
-    setStatus('info', `AI ${g.level} đi <b>${done}</b> · tới lượt bạn.`);
+    setStatus('info', `AI ${g.level} đi <b>${done}</b>${j.joseki && done === j.move ? ' (định thức)' : ''} · tới lượt bạn.`);
     setTimeout(thinkAhead);
   } catch (err) {
     setStatus('err', 'AI chưa đi được: ' + esc(err.message) + ' · bấm <b>🤖 AI đi</b> để thử lại.');
