@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -38,7 +39,9 @@ CHAINS = {
 }
 # Gemini 3 models think before answering, out of the same output budget: a little for positions, none otherwise
 THINKING = {'board': 'low', 'books': 'minimal', 'translate': 'minimal', 'feedback': 'minimal'}
-TIMEOUT = 60
+TIMEOUT = int(os.environ.get('LLM_TIMEOUT', '25'))   # seconds a model may take before the next one is tried
+COOLDOWN = 180   # seconds a model is skipped after it said it is overloaded or out of quota (503 / 429 / timeout)
+_cooling = {}    # "provider:model" -> time it may be tried again
 
 
 class Unavailable(Exception):
@@ -65,8 +68,11 @@ def chain(name):
 
 @lru_cache(maxsize=1)
 def _gemini():
+    """No retries inside the SDK (an overloaded model is left for the next one of the chain) and a timeout."""
     from google import genai
-    return genai.Client(api_key=os.environ['GEMINI_API_KEY'])
+    from google.genai import types
+    return genai.Client(api_key=os.environ['GEMINI_API_KEY'],
+                        http_options=types.HttpOptions(timeout=TIMEOUT * 1000, retry_options=types.HttpRetryOptions(attempts=1)))
 
 
 def _call_gemini(model, system, messages, max_tokens, schema, temperature, thinking=None):
@@ -120,7 +126,10 @@ def generate(chain_name, system, messages, max_tokens, schema=None, temperature=
     """messages: [{"role": "user" | "assistant", "content": ...}]. schema: Gemini response schema for JSON
     answers (other providers get JSON mode). -> Reply; raises Unavailable when every provider failed."""
     errors = []
-    for provider, model in chain(chain_name):
+    models = chain(chain_name)
+    now = time.time()
+    ready = [pm for pm in models if _cooling.get(':'.join(pm), 0) <= now] or models   # all cooling: try them anyway
+    for provider, model in ready:
         try:
             if provider == 'gemini':
                 text, tokens = _call_gemini(model, system, messages, max_tokens, schema, temperature,
@@ -131,6 +140,9 @@ def generate(chain_name, system, messages, max_tokens, schema=None, temperature=
             log.warning('%s:%s failed, trying the next model: %s', provider, model, str(ex)[:300])
             errors.append(f'{provider}:{model}: {str(ex)[:120]}')
             _count(f'llm_err:{provider}')
+            if any(x in str(ex) for x in ('503', '429', 'UNAVAILABLE', 'RESOURCE_EXHAUSTED', 'overloaded', 'timed out',
+                                          'Timeout', 'timeout')) or isinstance(ex, TimeoutError):
+                _cooling[f'{provider}:{model}'] = time.time() + COOLDOWN
             if any(x in str(ex) for x in ('429', 'RESOURCE_EXHAUSTED', 'rate limit', 'Rate limit')):
                 _count(f'llm_429:{provider}')
             continue

@@ -3,6 +3,13 @@ import pytest
 from rag import llm
 
 
+@pytest.fixture(autouse=True)
+def no_cooldown():
+    llm._cooling.clear()     # a model marked overloaded by one test must not be skipped in the next
+    yield
+    llm._cooling.clear()
+
+
 @pytest.fixture
 def keys(monkeypatch):
     for v in llm.KEYS.values():
@@ -60,3 +67,24 @@ def test_tts_falls_back_and_caches(monkeypatch):
         tts.synthesize('khác')
     pieces = tts._pieces('Một câu ngắn. ' * 40, 190)
     assert all(len(p) <= 190 for p in pieces) and ' '.join(pieces) == ('Một câu ngắn. ' * 40).strip()
+
+
+def test_overloaded_model_is_skipped_for_a_while(keys, monkeypatch):
+    llm._cooling.clear()
+    calls = []
+
+    def gemini(model, *a):
+        calls.append(model)
+        raise RuntimeError('503 UNAVAILABLE: high demand')
+
+    def openai(provider, model, *a):
+        calls.append(model)
+        return 'ok', 1
+    monkeypatch.setattr(llm, '_call_gemini', gemini)
+    monkeypatch.setattr(llm, '_call_openai', openai)
+    assert llm.generate('board', 's', [{'role': 'user', 'content': 'q'}], 10).text == 'ok'
+    assert calls == ['flash', 'lite', 'oss']
+    calls.clear()
+    llm.generate('board', 's', [{'role': 'user', 'content': 'q'}], 10)   # the overloaded ones are not tried again
+    assert calls == ['oss']
+    llm._cooling.clear()
