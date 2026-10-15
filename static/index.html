@@ -186,6 +186,9 @@
   .best { background: #2f7d4f; } .good { background: #8a8f2a; } .ok { background: #d08a1e; }
   #jSeq { margin-top: 8px; font-size: 13px; }
   #jMain { letter-spacing: normal; font-size: 14px; }
+  .confirm { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; }
+  .confirm span { flex: 1; font-size: 14px; }
+  .confirm .btn { width: auto; padding: 11px 16px; }
   .nav { display: flex; gap: 6px; }
   .nav button { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
                 padding: 11px 0; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: -2px; }
@@ -345,6 +348,20 @@
     </div>
 
     <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="confirm" id="confirmBar" hidden>
+      <span id="confirmText"></span>
+      <button type="button" class="btn accent" id="confirmOk">✓ Đặt quân</button>
+      <button type="button" class="btn secondary" id="confirmCancel" title="Bỏ chọn">✕</button>
+    </div>
+    <div class="nav field" id="navBar">
+      <button type="button" id="navFirst" title="Về thế cờ ban đầu (Home)">⏮</button>
+      <button type="button" id="navBack10" title="Lùi 10 nước">◀◀</button>
+      <button type="button" id="undo" title="Lùi 1 nước (←)">◀</button>
+      <button type="button" id="redo" title="Tiến 1 nước (→)">▶</button>
+      <button type="button" id="navFwd10" title="Tiến 10 nước">▶▶</button>
+      <button type="button" id="navLast" title="Tới cuối nhánh đang sáng (End)">⏭</button>
+    </div>
+    <label class="anon muted" style="font-size:13px"><input type="checkbox" id="confirmToggle"> Chạm để chọn điểm, bấm ✓ để đặt quân (tránh bấm nhầm)</label>
     <div class="vars" id="varsBox" hidden>
       <h3><span>🔀 Biến thể trong ván này <span class="muted" id="varCount"></span></span>
         <button type="button" id="varBack" hidden title="Về thế cờ trước khi xem biến">↶ Thế cờ trước</button></h3>
@@ -371,14 +388,6 @@
       </div>
     </div>
     <div class="muted" id="followHint"></div>
-    <div class="nav" id="navBar">
-      <button type="button" id="navFirst" title="Về thế cờ ban đầu (Home)">⏮</button>
-      <button type="button" id="navBack10" title="Lùi 10 nước">◀◀</button>
-      <button type="button" id="undo" title="Lùi 1 nước (←)">◀</button>
-      <button type="button" id="redo" title="Tiến 1 nước (→)">▶</button>
-      <button type="button" id="navFwd10" title="Tiến 10 nước">▶▶</button>
-      <button type="button" id="navLast" title="Tới cuối nhánh đang sáng (End)">⏭</button>
-    </div>
     <div class="treehead">
       <span><b>🌳 Cây nước đi</b> <span class="muted" id="treeInfo"></span></span>
       <button type="button" id="cutBranch" title="Xoá nước đang xem và mọi nước sau nó">✂ Xoá từ nước này</button>
@@ -485,6 +494,9 @@ let session = null;   // review session on screen: {id, title, pinned}; created 
 let game = null;      // game record of a session imported from SGF: {moves: [["B", "Q16" | "pass"]], komi, …}
 let kataLine = null; // KataGo's best line over the board, see "follow KataGo" below
 let play = null;      // a game against the AI on this board, see "game against the AI" below
+let pending = null;   // with move confirmation: the tapped point waiting for ✓ Đặt quân ({r, c})
+let confirmMoves = true;
+try { confirmMoves = localStorage.getItem('goscan-confirm') !== '0'; } catch (e) {}
 let scoring = null;   // counting the end of a game: {len (stones counted), toggles, res, busy, confirmed}
 let followMode = 'branch'; // what ▶ ▶▶ ⏭ follow: 'branch' (the lit line of the tree) or 'kata' (KataGo's best moves)
 let matrix = null;    // current (possibly edited) matrix
@@ -658,6 +670,13 @@ function render() {
     }
     fetchLine(rl);
   }
+  if (pending && (matrix[pending.r]?.[pending.c] !== 0 || (play && !play.over && toPlay === play.ai))) pending = null;
+  if (pending) {   // the chosen point, waiting for ✓
+    const x = m + pending.c * s, y = m + pending.r * s, black = toPlay === 'B';
+    h += `<circle cx="${x}" cy="${y}" r="13.5" fill="${black ? 'rgba(20,20,20,.5)' : 'rgba(250,250,250,.75)'}" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="4 3" pointer-events="none"/>`;
+  }
+  $('confirmBar').hidden = !pending;
+  if (pending) $('confirmText').innerHTML = `${toPlay === 'B' ? '⚫' : '⚪'} ${NAME[toPlay]} đặt ở <b>${pointName(pending.r, pending.c)}</b>?`;
   if (sugg) sugg.moves.forEach((mv, i) => {
     if (mv.row === null) return;
     const x = m + mv.col * s, y = m + mv.row * s;
@@ -786,15 +805,36 @@ $('board').addEventListener('click', e => {
   if (cand) { followCandidate(cand); return; }   // a suggestion of 💡 Gợi ý: play it, then ▶ follows KataGo
   const hit = !playing && kataLine?.window?.find(w => w.r === r && w.c === c);
   if (hit) { playLineTo(hit.idx); return; }   // a numbered move of KataGo's line: go on along it
-  const who = toPlay;
+  if (confirmMoves && !(pending && pending.r === r && pending.c === c)) {   // first tap: only choose the point
+    if (matrix[r][c]) { setStatus('err', 'Điểm này đã có quân. Chạm giữ quân để xoá, hoặc ◀ để lùi.'); return; }
+    pending = { r, c };
+    render();
+    return;
+  }
+  commitMove(r, c);   // a second tap on the same point confirms too
+});
+
+// The move itself: `toPlay` plays (r, c); in a game against the AI, the AI answers
+function commitMove(r, c) {
+  pending = null;
+  const playing = play && !play.over, who = toPlay;
   const err = place(r, c, who);
-  if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ◀ để lùi.' : '')); return; }
+  if (err) { setStatus('err', err + (matrix[r][c] ? ' Chạm giữ quân để xoá, hoặc ◀ để lùi.' : '')); render(); return; }
   setStatus('info', `${NAME[who]} đặt ${pointName(r, c)} · tới lượt ${NAME[toPlay]}.`);
   clearSugg();
   if (playing) play.passes = 0;
   render();
   saveSoon();
   if (playing) aiMove();
+}
+$('confirmOk').addEventListener('click', () => { if (pending) commitMove(pending.r, pending.c); });
+$('confirmCancel').addEventListener('click', () => { pending = null; render(); });
+$('confirmToggle').checked = confirmMoves;
+$('confirmToggle').addEventListener('change', () => {
+  confirmMoves = $('confirmToggle').checked;
+  pending = null;
+  try { localStorage.setItem('goscan-confirm', confirmMoves ? '1' : '0'); } catch (e) {}
+  render();
 });
 
 // Long-press a stone to remove it (e.g. a stone recognised by mistake); recorded so Undo puts it back
@@ -825,6 +865,7 @@ $('board').addEventListener('contextmenu', e => e.preventDefault());
 
 // Board = photographed position + the stones placed / removed since, replayed so captures and ko come out right
 function replay() {
+  pending = null;   // the position changes: a chosen point no longer means the same
   let board = scan.matrix;
   koBoard = null;   // playMove checks the ko against koBoard: rebuild it move by move
   for (const p of played) {
