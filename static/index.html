@@ -219,6 +219,7 @@
   .varprev { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
   .varprev svg { width: 100%; max-width: 360px; display: block; margin: 6px auto; border-radius: 6px; }
   .varprev .pv { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .varprev .varerr { font-size: 13px; color: var(--err); margin: 4px 0 6px; }
   .msg .say { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
               cursor: pointer; padding: 0; }
   ul.reviews .reply { margin: 8px 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--accent); background: #f6f1e8;
@@ -2545,11 +2546,12 @@ function renderVars() {
   document.querySelectorAll('a.var').forEach(a => a.classList.toggle('on', a.dataset.var === on));
 }
 
-// The position the variation starts from, then its moves; ↶ Lùi steps back through them
+// The position the variation starts from, then its moves; ↶ Lùi steps back through them. -> null when it is on the
+// board, else why not (also in the status line)
 function showVariation(name) {
-  if (gameLocked()) return;
+  if (gameLocked()) return 'Đang đánh với AI: bàn cờ bị khoá.';
   const v = variations.find(x => x.name === name);
-  if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return; }
+  if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return `Không tìm thấy ${name} trong ván này.`; }
   const before = activeVar?.before || { played: played.slice(), toPlay, startTurn };
   played = v.start.map(p => ({ ...p }));
   replay();
@@ -2560,7 +2562,7 @@ function showVariation(name) {
       activeVar = null;
       restoreState(before);
       setStatus('err', `Không đi được ${esc(name)}: ${NAME[mv.color]} ${mv.point} — ${esc(err)}`);
-      return;
+      return `Không đi được ${NAME[mv.color]} ${mv.point}: ${err}`;
     }
   }
   activeVar = { name, from: v.start.length, before };
@@ -2569,6 +2571,7 @@ function showVariation(name) {
   saveSoon();
   setStatus('ok', `${esc(name)}${v.title ? ' · ' + esc(v.title) : ''}: ${v.moves.length > 1 ? `số 1–${v.moves.length}` : 'số 1'} trên bàn · ◀ để xem từng nước · tới lượt ${NAME[toPlay]}.`);
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return null;
 }
 $('varList').addEventListener('click', e => {
   const li = e.target.closest('li[data-var]');
@@ -2586,14 +2589,14 @@ function variationPreview(v) {
       const next = playMove(board, p.r, p.c, p.color);
       if (typeof next !== 'string') board = next;
     }
-    const nums = [];
+    const nums = [], bad = [];
     v.moves.forEach((mv, k) => {
       const rc = pointRC(mv.point), next = rc && playMove(board, rc[0], rc[1], mv.color === 'B' ? 1 : 2);
-      if (!rc || typeof next === 'string') return;
+      if (!rc || typeof next === 'string') { bad.push(`${k + 1}.${mv.point}`); return; }
       board = next;
       nums.push({ r: rc[0], c: rc[1], n: k + 1, color: mv.color === 'B' ? 1 : 2 });
     });
-    return { board, nums };
+    return { board, nums, bad };
   } finally { koBoard = saved; }
 }
 function previewSvg(board, nums) {
@@ -2623,7 +2626,12 @@ $('coachLog').addEventListener('click', e => {
     return;
   }
   const show = e.target.closest('[data-show]');
-  if (show) { showVariation(show.dataset.show); return; }
+  if (show) {   // why it failed goes right under the button: the status line is out of sight from the chat
+    const err = showVariation(show.dataset.show), note = show.parentElement.querySelector('.showerr');
+    if (note) note.remove();
+    if (err) show.insertAdjacentHTML('afterend', `<div class="varerr showerr">⚠ ${esc(err)}</div>`);
+    return;
+  }
   const a = e.target.closest('a[data-var]');
   if (!a) return;
   e.preventDefault();
@@ -2633,12 +2641,13 @@ $('coachLog').addEventListener('click', e => {
   if (open) return;   // a second tap closes it
   const v = variations.find(x => x.name === name);
   if (!v) { setStatus('err', `Không tìm thấy ${esc(name)} trong ván này.`); return; }
-  const { board, nums } = variationPreview(v);
+  const { board, nums, bad } = variationPreview(v);
   const box = document.createElement('div');
   box.className = 'varprev';
   box.dataset.var = name;
   box.innerHTML = `<div><b>${esc(name)}</b>${v.title ? ' · ' + esc(v.title) : ''}</div>${previewSvg(board, nums)}
-    <div class="pv">${varMoves(v)}</div><button type="button" class="src" data-show="${esc(name)}">▶ Đặt lên bàn cờ</button>`;
+    <div class="pv">${varMoves(v)}</div>${bad.length ? `<div class="varerr">⚠ Không đặt được: ${esc(bad.join(', '))}</div>` : ''}
+    <button type="button" class="src" data-show="${esc(name)}">▶ Đặt lên bàn cờ</button>`;
   (a.closest('p, ul, ol') || msg.lastElementChild).after(box);
 });
 $('varBack').addEventListener('click', () => {

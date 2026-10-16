@@ -63,7 +63,8 @@ mô tả rất ngắn (tối đa 6 từ).
 - "moves": đủ các nước của chuỗi theo đúng thứ tự, màu từng nước lấy đúng như trong chuỗi của KataGo, tối đa 12 nước.
 - "from_move": null nếu chuỗi bắt đầu từ thế cờ hiện tại; nếu chuỗi bắt đầu từ thế cờ cũ (ví dụ thay cho nước thứ 5 \
 người dùng đã đặt) thì là số nước được giữ lại trước chuỗi (ví dụ 4). Biến của một cách đáp sau nước X chưa có trên \
-bàn: chuỗi bắt đầu bằng chính X.
+bàn: chuỗi bắt đầu bằng chính X. Nước đầu của chuỗi phải là điểm còn trống ở thế cờ chuỗi bắt đầu.
+- Chuỗi đã có trong một biến trước (các biến đã nêu trước đây) thì chỉ nhắc lại tên cũ, KHÔNG tạo biến mới cho nó.
 - Trong "answer", nhắc tới biến bằng đúng tên trong ngoặc vuông, ví dụ "… diễn biến [Var1] …" (giao diện biến nó \
 thành liên kết); không cần viết lại toàn bộ chuỗi toạ độ, chỉ nêu vài nước chính. Không nêu biến không có trong \
 "variations". Không có chuỗi nào thì "variations" là [].

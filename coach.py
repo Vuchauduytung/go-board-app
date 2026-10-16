@@ -296,9 +296,25 @@ def clean_actions(actions, n):
 VAR_RE = re.compile(r'\[\s*var\s*(\d+)\s*\]|\bvar\s?(\d+)\b', re.I)
 
 
-def clean_variations(variations, n, played, first, answer):
+def _playable(matrix, played, cut, moves):
+    """Whether `moves` can be played from the board before played[cut:] (taken off `matrix`, the board now)."""
+    board = [row[:] for row in matrix]
+    for p in reversed(played[cut:]):
+        board[p['r']][p['c']] = 0 if p.get('color') else p.get('was') or 0
+    for m in moves:
+        r, c = parse_point(m['point'], len(board))
+        if board[r][c]:
+            return False
+        board, _ = play(board, r, c, 1 if m['color'] == 'B' else 2)
+    return True
+
+
+def clean_variations(variations, n, played, first, answer, matrix=None):
     """Variations named in a coach answer, renamed Var<first>, Var<first + 1>… so names stay unique in a session,
     each with `start`: the entries of `played` (the board's [{r, c, color}]) its first move is played after.
+    With `matrix` (the board now), a line that cannot be played from where the model said it starts (e.g. an earlier
+    line repeated from the board now, its first stone already there) starts at the latest earlier position it can be
+    played from, and one that fits none is left out.
     -> (variations, answer with [VarN] rewritten to the new names); the browser checks legality."""
     out, names = [], {}
     for v in (variations if isinstance(variations, list) else [])[:20]:
@@ -318,6 +334,12 @@ def clean_variations(variations, n, played, first, answer):
                     cut = i
                     break
             start = start[:cut]
+        if matrix is not None and not _playable(matrix, played, len(start), moves):
+            cuts = [i for i in range(len(start) - 1, -1, -1) if played[i].get('color')]   # before each placed stone
+            cut = next((i for i in cuts if _playable(matrix, played, i, moves)), None)
+            if cut is None:
+                continue
+            start = played[:cut]
         name = f'Var{first + len(out)}'
         names[local.group(1) or local.group(2)] = name
         out.append({'name': name, 'title': str(v.get('title') or '').strip()[:80], 'start': start, 'moves': moves})

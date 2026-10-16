@@ -150,3 +150,20 @@ def test_clean_variations():
     assert vs[0] == {'name': 'Var4', 'title': 'Cắt', 'start': played, 'moves': [{'color': 'B', 'point': 'C3'}]}
     assert vs[1]['start'] == played[:2]   # after the first placed stone, removals before the second kept
     assert text == 'Xem [Var4], rồi [Var5]; [Var3] bỏ, [Var5] cũ giữ? Var9 không có.'
+
+
+def test_variations_start_where_they_can_be_played():
+    # B6 and A7 are on the board; the model repeats a line from before them (B6 first) as if from the board now
+    matrix = [[0] * 19 for _ in range(19)]
+    matrix[13][1], matrix[12][0] = 1, 2
+    played = [{'r': 13, 'c': 1, 'color': 1}, {'r': 12, 'c': 0, 'color': 2}]
+    line = [{'color': 'B', 'point': p} if i % 2 == 0 else {'color': 'W', 'point': p}
+            for i, p in enumerate(['B6', 'A6', 'B10'])]
+    vs, text = coach.clean_variations([
+        {'name': 'Var1', 'from_move': None, 'moves': line},                                   # from the start
+        {'name': 'Var2', 'from_move': None, 'moves': [{'color': 'B', 'point': 'A10'}]},       # from the board now
+        {'name': 'Var3', 'from_move': None, 'moves': [{'color': 'W', 'point': 'A7'},          # fits no position:
+                                                      {'color': 'B', 'point': 'A7'}]},         # left out
+    ], 19, played, 1, '[Var1] [Var2] [Var3]', matrix)
+    assert [(v['name'], len(v['start'])) for v in vs] == [('Var1', 0), ('Var2', 2)]
+    assert text == '[Var1] [Var2] Var3'

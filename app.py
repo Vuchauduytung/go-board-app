@@ -509,7 +509,8 @@ def _chat(c, user):
     if c.board:
         n = len(c.board.matrix)
         actions = coach.clean_actions(res['actions'], n)
-        variations, res['answer'] = coach.clean_variations(res['variations'], n, played, first_var, res['answer'])
+        variations, res['answer'] = coach.clean_variations(res['variations'], n, played, first_var, res['answer'],
+                                                            c.board.matrix)
     if session and c.board:
         sessions.append_chat(user, session['id'], {'q': q, 'a': res['answer'], 'sources': res['sources'],
                                                    'marks': marks, 'actions': actions}, variations)
