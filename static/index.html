@@ -1801,7 +1801,7 @@ async function aiMove() {
     if (!done || done === 'pass') { aiPass(); return; }
     g.passes = 0;
     if (done === j.move && j.loss != null) g.ai_losses.push(j.loss);   // a joseki move KataGo did not list: no loss
-    g.expect = { len: played.length, lead: j.chosen_lead };
+    g.expect = j.chosen_lead != null ? { len: played.length, lead: j.chosen_lead } : null;   // a move KataGo did not search: no score to judge the reply by
     setStatus('info', `AI ${g.level} đi <b>${done}</b>${j.joseki && done === j.move ? ' (định thức)' : ''} · tới lượt bạn.`);
     setTimeout(thinkAhead);
   } catch (err) {

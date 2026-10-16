@@ -28,6 +28,8 @@ def key(payload):
     position = [board, nxt, ko, float(payload.get('komi', 7.5)), payload.get('rules', 'chinese')]
     search = [int(payload.get('max_visits', 400)), int(payload.get('top', 5)), bool(payload.get('ownership')),
               sorted(payload.get('avoid', [])), float(payload.get('wide_root_noise') or 0)]
+    if payload.get('human_profile'):   # only then: the keys of every other search stay as they were
+        search.append(payload['human_profile'])
     return PREFIX + hashlib.sha1(json.dumps([position, search]).encode()).hexdigest()
 
 

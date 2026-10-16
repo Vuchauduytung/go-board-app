@@ -1,13 +1,16 @@
 # Small HTTP wrapper around KataGo's JSON analysis engine.
 #   POST /analyze  {"matrix": [[0|1|2]], "to_play": "B"|"W", "komi"?, "rules"?, "max_visits"?, "top"?,
 #                   "moves"?: [["B"|"W", "Q16"], ...] played after the position, "ownership"?: bool,
-#                   "avoid"?: ["Q16", ...] moves not searched at the root, "wide_root_noise"?: float}
+#                   "avoid"?: ["Q16", ...] moves not searched at the root, "wide_root_noise"?: float,
+#                   "human_profile"?: "rank_3k" | "preaz_1d" | "proyear_1990"…: with a human SL model loaded
+#                   (KATAGO_HUMAN_MODEL), also "human_policy": [["Q16", p], …] how a player of that profile would play}
 #   GET  /health
 # Matrix: row 0 = top of the board, 0 empty, 1 black, 2 white (same as the app).
 # Uses only the standard library; one KataGo process serves all requests (it batches internally).
 
 import json
 import os
+import re
 import subprocess
 import threading
 import uuid
@@ -19,8 +22,11 @@ CONFIG = os.environ.get('KATAGO_CONFIG', '/opt/katago/analysis.cfg')
 COLS = 'ABCDEFGHJKLMNOPQRSTUVWXYZ'
 TIMEOUT = 60
 MAX_VISITS = int(os.environ.get('KATAGO_MAX_VISITS', '3000'))   # CPU deployments cap the search
+HUMAN_MODEL = os.environ.get('KATAGO_HUMAN_MODEL', '')   # b18c384nbt-humanv0.bin.gz: human-like play (KataGo ≥ 1.15)
+PROFILE = re.compile(r'(rank|preaz)_([1-9]|1[0-9]|20)k|(rank|preaz)_[1-9]d|proyear_(18|19|20)[0-9][0-9]')
 
-proc = subprocess.Popen([KATAGO, 'analysis', '-config', CONFIG, '-model', MODEL],
+proc = subprocess.Popen([KATAGO, 'analysis', '-config', CONFIG, '-model', MODEL] +
+                        (['-human-model', HUMAN_MODEL] if HUMAN_MODEL else []),
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
 pending = {}          # query id -> [threading.Event, response]
 lock = threading.Lock()
@@ -88,8 +94,18 @@ def analyze(req):
     }
     if avoid:   # used to get KataGo's verdict on moves beyond its favourites
         query['avoidMoves'] = [{'player': root_player, 'moves': avoid, 'untilDepth': 1}]
+    override = {}
     if req.get('wide_root_noise'):   # spreads root visits over more candidate moves
-        query['overrideSettings'] = {'wideRootNoise': min(max(float(req['wide_root_noise']), 0.0), 1.0)}
+        override['wideRootNoise'] = min(max(float(req['wide_root_noise']), 0.0), 1.0)
+    profile = req.get('human_profile')
+    if profile and HUMAN_MODEL:   # KataGo's "human-like play" recipe (docs/Analysis_Engine.md, Human SL guide)
+        if not PROFILE.fullmatch(profile):
+            raise ValueError(f'bad human profile {profile}')
+        override.update(humanSLProfile=profile, ignorePreRootHistory=False,   # players answer the last moves
+                        humanSLRootExploreProbWeightless=0.5)   # human moves get searched too, not biasing the score
+        query['includePolicy'] = True
+    if override:
+        query['overrideSettings'] = override
     slot = [threading.Event(), None]
     pending[qid] = slot
     try:
@@ -118,7 +134,11 @@ def analyze(req):
         })
     root = resp.get('rootInfo', {})
     own = resp.get('ownership')   # row-major from the top-left, side-to-move perspective
+    hp = resp.get('humanPolicy')  # same order, then pass; -1 for illegal moves
+    human = sorted(([to_gtp(i // n, i % n, n) if i < n * n else 'pass', round(p, 4)]
+                    for i, p in enumerate(hp) if p >= 0.0005), key=lambda x: -x[1]) if hp else None
     return {
+        'human_policy': human,
         'ownership': [[round(own[r * n + c], 2) for c in range(n)] for r in range(n)] if own else None,
         'to_play': to_play,
         'winrate': round(root.get('winrate', 0.5), 4),

@@ -15,11 +15,14 @@ COPY --from=build /src/cpp/katago /opt/katago/katago
 # b15c192: the strongest net that is still quick on CPU (same as the Cloud Run deployment)
 RUN curl -fsSL -o /opt/katago/model.txt.gz \
       https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b15c192-s1672170752-d466197061.txt.gz
+# the human SL net: how players of a given rank play (games against the AI, bot.py)
+RUN curl -fsSL -o /opt/katago/human.bin.gz \
+      https://github.com/lightvector/KataGo/releases/download/v1.15.0/b18c384nbt-humanv0.bin.gz
 COPY analysis-cpu.cfg /opt/katago/analysis.cfg
 # 2 cores on the free VM
 RUN sed -i 's/^numSearchThreadsPerAnalysisThread = .*/numSearchThreadsPerAnalysisThread = 2/' /opt/katago/analysis.cfg
 COPY katago_server.py /opt/katago/
 ENV KATAGO_BIN=/opt/katago/katago KATAGO_MODEL=/opt/katago/model.txt.gz KATAGO_CONFIG=/opt/katago/analysis.cfg \
-    KATAGO_MAX_VISITS=400
+    KATAGO_MAX_VISITS=400 KATAGO_HUMAN_MODEL=/opt/katago/human.bin.gz
 EXPOSE 8080
 CMD ["python3", "/opt/katago/katago_server.py"]

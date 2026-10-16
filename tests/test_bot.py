@@ -70,6 +70,26 @@ def test_passes_at_the_end_never_in_the_middle():
     assert not any(bot.choose(middle, '5k', random.Random(i))['move'] == 'pass' for i in range(300))
 
 
+def test_human_policy_chooses_the_move():
+    res = {**answer([5, 4, -10], visits=[60, 30, 10]),
+           'human_policy': [['A3', 0.5], ['B7', 0.3], ['A2', 0.15], ['pass', 0.05]]}
+    picks = [bot.choose(res, '5k', random.Random(i)) for i in range(400)]
+    got = {c['move'] for c in picks}
+    assert got == {'A3', 'B7', 'A2'} and all(c['human'] for c in picks)          # as players would; no random pass
+    a3 = next(c for c in picks if c['move'] == 'A3')
+    assert 15 < a3['loss'] <= 16 and a3['chosen_lead'] == -10                  # KataGo's loss, for the statistics
+    b7 = next(c for c in picks if c['move'] == 'B7')
+    assert b7['loss'] is None and b7['chosen_lead'] is None                      # not searched: unknown
+    assert sum(c['move'] == 'A3' for c in picks) / 400 > 0.35                    # drawn by the policy
+    assert 'A3' not in {bot.choose(res, '1d', random.Random(i))['move'] for i in range(200)}   # past 1d's cap
+    assert bot.choose({**res, 'human_policy': [['A3', 1.0]]}, '5d', random.Random(0))['move'] == 'A3'  # all past it
+    # KataGo still passes at the end, whatever the policy says
+    done = {'winrate': 0.9, 'score_lead': 3, 'human_policy': [['A1', 0.9]],
+            'moves': [{'move': 'A1', 'score_lead': 3, 'visits': 50}, {'move': 'pass', 'score_lead': 2.9, 'visits': 40}]}
+    assert bot.choose(done, '5k')['move'] == 'pass'
+    assert bot.HUMAN_PROFILE['5k'] == 'rank_5k' and bot.HUMAN_PROFILE['3d'] == 'rank_3d'
+
+
 def test_games_run_on_the_cpu():
     assert bot.SEARCH['engine'] == 'cpu' and bot.SEARCH['max_visits'] <= 200 and bot.SEARCH['top'] == 40
 

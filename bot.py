@@ -33,6 +33,11 @@ SEARCH = {'top': 40, 'ownership': False, 'max_visits': int(os.environ.get('PLAY_
 RELIABLE = 0.1      # the best move is taken among candidates with at least this share of the top visits
 PASS_WHEN_DONE = 0.3     # the AI passes when passing loses at most this (nothing left worth a move)…
 PASS_AFTER_PASS = 1.0    # …or this much once the player has passed (filling its own area gains nothing)
+# With KataGo's human SL net on the CPU engine (katago_server.py, KATAGO_HUMAN_MODEL) a level plays as players of that
+# rank do: its move is drawn from the net's prediction of their moves (KataGo's recipe for human-like play), not by
+# the points it loses, so it makes the mistakes such players make. KataGo still decides when to pass and resign, and
+# a searched move losing more than the level's cap is left out (the net's rare stray moves).
+HUMAN_PROFILE = {lv: f'rank_{lv}' for lv in LEVELS}
 RESIGN_WINRATE = 0.02
 RESIGN_AFTER = 80   # moves
 
@@ -76,6 +81,9 @@ def choose(res, level, rnd=random, opponent_passed=False):
                 'resign': False}
     moves = [m for m in moves if m['move'].lower() != 'pass'] or moves   # never a random pass in the middle
     sure = UNSURE / math.sqrt(best_move['visits'])
+    human = [(mv, p) for mv, p in res.get('human_policy') or [] if mv != 'pass']
+    if human:
+        return _choose_human(res, human, best_move, cap, sure, rnd)
     cands = sorted(((max(0.0, best_move['score_lead'] - m['score_lead'] + UNSURE / math.sqrt(max(1, m['visits'])) - sure), m)
                     for m in moves), key=lambda x: x[0])
     allowed = [(l, m) for l, m in cands if l <= cap] or cands[:1]
@@ -86,6 +94,24 @@ def choose(res, level, rnd=random, opponent_passed=False):
             'alternatives': [m['move'] for _, m in allowed if m is not chosen],
             'best': best_move['move'], 'best_lead': best_move['score_lead'], 'score_lead': res['score_lead'],
             'winrate': res['winrate'], 'resign': False}
+
+
+def _choose_human(res, human, best_move, cap, sure, rnd):
+    """A move drawn from the human policy ([(move, p)…]): KataGo's loss for it when it searched it, else None."""
+    searched = {m['move']: m for m in res['moves']}
+
+    def loss(mv):
+        m = searched.get(mv)
+        return None if m is None else max(0.0, best_move['score_lead'] - m['score_lead'] +
+                                          UNSURE / math.sqrt(max(1, m['visits'])) - sure)
+    allowed = [(mv, p, loss(mv)) for mv, p in human]
+    allowed = [a for a in allowed if a[2] is None or a[2] <= cap] or allowed[:1]
+    mv, _, lost = allowed[rnd.choices(range(len(allowed)), weights=[p for _, p, _ in allowed])[0]]
+    return {'move': mv, 'loss': None if lost is None else round(lost, 2),
+            'chosen_lead': searched[mv]['score_lead'] if mv in searched else None,
+            'alternatives': [a[0] for a in allowed if a[0] != mv],   # most likely first
+            'best': best_move['move'], 'best_lead': best_move['score_lead'], 'score_lead': res['score_lead'],
+            'winrate': res['winrate'], 'resign': False, 'human': True}
 
 
 def should_resign(res, move_number):

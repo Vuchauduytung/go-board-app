@@ -873,7 +873,8 @@ class PlayIn(BaseModel):
 
 @app.post('/api/play')
 def play_move(body: PlayIn, user: str = Depends(current_user)):
-    """The AI's move in a game against it: one of KataGo's candidates, drawn for the level (bot.py)."""
+    """The AI's move in a game against it: as a player of the level would play it, or one of KataGo's candidates
+    drawn for the level (bot.py)."""
     _check_board(body.matrix, body.to_play)
     _own_session(user, body.session_id)
     if body.level not in bot.LEVELS:
@@ -883,6 +884,8 @@ def play_move(body: PlayIn, user: str = Depends(current_user)):
                                       (m[1] != 'pass' and coach.parse_point(m[1], n) is None) for m in body.moves):
         raise HTTPException(400, 'Nước đi không hợp lệ')
     payload = {'matrix': body.matrix, 'to_play': body.to_play, 'moves': body.moves, 'komi': body.komi, **bot.SEARCH}
+    if not body.think:   # the AI's move: as a player of the level would play it (with the CPU's human SL net)
+        payload['human_profile'] = bot.HUMAN_PROFILE[body.level]
     try:
         res = _katago_for(user, body.session_id)(payload)
     except QuotaExceeded as ex:
