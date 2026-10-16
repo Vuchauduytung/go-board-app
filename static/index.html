@@ -201,6 +201,8 @@
   .nav button { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
                 padding: 11px 0; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: -2px; }
   .nav button:disabled { opacity: .35; cursor: default; }
+  .nav button.hints { flex: 0 0 auto; padding-left: 10px; padding-right: 10px; }
+  .nav button.hints.off { background: #efe7da; }
   .treehead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 6px; font-size: 13px; }
   .treehead button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px;
                      padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
@@ -371,6 +373,7 @@
       <button type="button" id="redo" title="Tiến 1 nước (→)">▶</button>
       <button type="button" id="navFwd10" title="Tiến 10 nước">▶▶</button>
       <button type="button" id="navLast" title="Tới cuối nhánh đang sáng (End)">⏭</button>
+      <button type="button" id="hintsToggle" class="hints" title="Ẩn / hiện nước đi đề xuất (gợi ý, biến KataGo)">👁</button>
     </div>
     <label class="anon muted" style="font-size:13px"><input type="checkbox" id="confirmToggle"> Chạm để chọn điểm, bấm ✓ hoặc <b>nhấn giữ</b> để đặt quân (tránh bấm nhầm)</label>
     <div class="vars" id="varsBox" hidden>
@@ -542,6 +545,7 @@ let kataLine = null; // KataGo's best line over the board, see "follow KataGo" b
 let play = null;      // a game against the AI on this board, see "game against the AI" below
 let pending = null;   // with move confirmation: the tapped point waiting for ✓ Đặt quân ({r, c})
 let confirmMoves = true;
+let showHints = true;   // 👁: the suggested moves (💡 Gợi ý, KataGo's numbered line, the assistant's marks) on the board
 try { confirmMoves = localStorage.getItem('goscan-confirm') !== '0'; } catch (e) {}
 let scoring = null;   // counting the end of a game: {len (stones counted), toggles, res, busy, confirmed}
 let followMode = 'branch'; // what ▶ ▶▶ ⏭ follow: 'branch' (the lit line of the tree) or 'kata' (KataGo's best moves)
@@ -696,7 +700,7 @@ function render() {
       }
     }
   }
-  for (const k of coachMarks) {
+  for (const k of showHints ? coachMarks : []) {
     const col = k.loss <= 2 ? '#2f7d4f' : k.loss <= 5 ? '#d08a1e' : '#b3261e';
     h += `<rect x="${m + k.col * s - 14}" y="${m + k.row * s - 14}" width="28" height="28" rx="6" fill="none" stroke="${col}" stroke-width="3" stroke-dasharray="5 3" pointer-events="none"/>`;
   }
@@ -710,6 +714,7 @@ function render() {
       const e = st[k + i];
       if (!e || rl.window.some(w => w.r === e.r && w.c === e.c)) continue;   // a pass, or a point played again later
       rl.window.push({ r: e.r, c: e.c, idx: k + i });
+      if (!showHints) continue;   // ▶ still follows it
       const x = m + e.c * s, y = m + e.r * s, black = e.color === 1;
       h += `<circle cx="${x}" cy="${y}" r="13" fill="${black ? 'rgba(20,20,20,.72)' : 'rgba(250,250,250,.88)'}" stroke="var(--ok)" stroke-width="${i ? 1.2 : 2.5}" pointer-events="none"/>`;
       h += `<text x="${x}" y="${y + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${black ? '#fff' : '#141414'}" pointer-events="none">${i + 1}</text>`;
@@ -723,7 +728,10 @@ function render() {
   }
   $('confirmBar').hidden = !pending;
   if (pending) $('confirmText').innerHTML = `${toPlay === 'B' ? '⚫' : '⚪'} ${NAME[toPlay]} đặt ở <b>${pointName(pending.r, pending.c)}</b>?`;
-  if (sugg) sugg.moves.forEach((mv, i) => {
+  $('sugg').hidden = !sugg || !showHints;
+  $('hintsToggle').textContent = showHints ? '👁' : '🙈';
+  $('hintsToggle').classList.toggle('off', !showHints);
+  if (sugg && showHints) sugg.moves.forEach((mv, i) => {
     if (mv.row === null) return;
     const x = m + mv.col * s, y = m + mv.row * s;
     const stone = toPlay === 'B' ? 'rgba(20,20,20,.55)' : 'rgba(250,250,250,.8)';
@@ -765,7 +773,7 @@ function updateModeUI() {
     : !kl ? '' : kl.k < kl.moves.length ? `▶ đi nước tốt nhất của KataGo · đã tính trước ${kl.moves.length - kl.k} nước${kl.fetching ? ', đang tính thêm…' : ''}.`
     : kl.ended ? 'KataGo: hết biến (ván đã kết thúc).' : kl.error ? `KataGo chưa trả lời: ${kl.error}` : 'KataGo đang tính nước tốt nhất…';
   $('cutBranch').disabled = !cur.parent;
-  if (inGame()) for (const b of [...$('navBar').children, $('cutBranch')]) b.disabled = true;   // only ↶ Đi lại
+  if (inGame()) for (const b of [...$('navBar').children, $('cutBranch')]) b.disabled = b.id !== 'hintsToggle';   // only ↶ Đi lại (and 👁)
   if (!$('analyze').disabled) $('analyze').textContent = `💡 Gợi ý nước đi cho ${NAME[toPlay]}`;
 }
 
@@ -847,9 +855,9 @@ $('board').addEventListener('click', e => {
     setStatus('info', play.thinking ? 'AI đang nghĩ…' : 'Đang tới lượt AI: bấm <b>🤖 AI đi</b>.');
     return;
   }
-  const cand = !playing && sugg?.moves.find(mv => mv.row === r && mv.col === c);
+  const cand = !playing && showHints && sugg?.moves.find(mv => mv.row === r && mv.col === c);
   if (cand) { followCandidate(cand); return; }   // a suggestion of 💡 Gợi ý: play it, then ▶ follows KataGo
-  const hit = !playing && kataLine?.window?.find(w => w.r === r && w.c === c);
+  const hit = !playing && showHints && kataLine?.window?.find(w => w.r === r && w.c === c);
   if (hit) { playLineTo(hit.idx); return; }   // a numbered move of KataGo's line: go on along it
   if (confirmMoves) {   // a tap only chooses the point: ✓ Đặt quân, or a long-press, plays it
     if (matrix[r][c]) { setStatus('err', 'Điểm này đã có quân. Chạm giữ quân để xoá, hoặc ◀ để lùi.'); return; }
@@ -882,6 +890,17 @@ $('confirmToggle').addEventListener('change', () => {
   try { localStorage.setItem('goscan-confirm', confirmMoves ? '1' : '0'); } catch (e) {}
   render();
 });
+try { showHints = localStorage.getItem('goscan-hints') !== '0'; } catch (e) {}
+function setHints(on) {
+  showHints = on;
+  try { localStorage.setItem('goscan-hints', on ? '1' : '0'); } catch (e) {}
+  if (matrix) render();
+  if (reviewData) showReview(reviewData);
+}
+$('hintsToggle').addEventListener('click', () => {
+  setHints(!showHints);
+  setStatus('info', showHints ? '👁 Đang hiện nước đi đề xuất.' : '🙈 Đã ẩn nước đi đề xuất: tự tìm nước, bấm 👁 để xem lại.');
+});
 
 // Long-press a stone to remove it (e.g. a stone recognised by mistake); recorded so Undo puts it back.
 // Long-press an empty point (with move confirmation on): play it at once, as ✓ Đặt quân would
@@ -897,7 +916,7 @@ function removeStone(r, c) {
 function canPlayHere(r, c) {
   if (matrix[r][c] || !confirmMoves || pickMode || scoring) return false;
   if (inGame() && (play.thinking || toPlay === play.ai)) return false;
-  return !(!inGame() && (sugg?.moves.some(mv => mv.row === r && mv.col === c) || kataLine?.window?.some(w => w.r === r && w.c === c)));
+  return !(!inGame() && showHints && (sugg?.moves.some(mv => mv.row === r && mv.col === c) || kataLine?.window?.some(w => w.r === r && w.c === c)));
 }
 $('board').addEventListener('pointerdown', e => {
   suppressClick = false;   // a new press: the last long-press may have ended with no click (the board was redrawn)
@@ -1143,6 +1162,7 @@ $('analyze').addEventListener('click', async () => {
     try { s = await ensureSession(); } catch (e) { /* analysed without indexing it in a session */ }
     const j = await apiJson('api/analyze', { method: 'POST', body: { matrix, to_play: toPlay, komi: komi(), session_id: s?.id } });
     sugg = j;
+    if (!showHints) setHints(true);   // asked for: shown
     // winrate / lead are for the side to move: show both sides on one bar (black fills from the left)
     const bWin = toPlay === 'B' ? j.winrate : 1 - j.winrate;
     const bLead = toPlay === 'B' ? j.score_lead : -j.score_lead;
@@ -1387,8 +1407,8 @@ function showReview(r) {
   $('mistakes').innerHTML = list.map((m, i) => `
     <li data-i="${i}">
       <div>${m.kind ? `<span class="kind">${EX_ICON[m.kind] || ''} ${KIND_NAME[m.kind] || ''}</span> ` : ''}<b>Nước ${m.number}</b>: ${m.color === 'B' ? '⚫' : '⚪'} ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
-        · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${m.best || '—'}</b></div>
-      <div class="line">Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}</div>
+        · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${showHints ? m.best || '—' : '🙈'}</b></div>
+      <div class="line">${showHints ? `Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}` : 'Biến tốt nhất đang ẩn: tự tìm nước tốt hơn, bấm 👁 dưới bàn cờ để xem.'}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');
   requestAnimationFrame(() => fitThree($('mistakes')));
   $('josekiBox').hidden = !game;
@@ -1531,7 +1551,8 @@ $('mistakes').addEventListener('click', e => {
     '<button class="src" type="button" data-act="ask">💬 Hỏi trợ lý về lỗi này</button>';
   li.appendChild(acts);
   render();
-  setStatus('info', `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${Math.min(WINDOW, m.line.length)} viền xanh là biến tốt nhất bắt đầu bằng ${m.best}: chạm một số hoặc bấm ▶ để đi theo.`);
+  setStatus('info', showHints ? `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm); số 1–${Math.min(WINDOW, m.line.length)} viền xanh là biến tốt nhất bắt đầu bằng ${m.best}: chạm một số hoặc bấm ▶ để đi theo.`
+    : `Thế cờ trước nước ${m.number}: ${NAME[m.color]} đã đi ${m.move} (mất ${m.loss} điểm). Nước đề xuất đang ẩn: tự tìm nước tốt hơn, bấm 👁 để xem biến tốt nhất.`);
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 
