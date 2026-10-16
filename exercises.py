@@ -22,6 +22,9 @@ MIN_LOSS = 2.0      # points a mistake must lose to become an exercise
 PER_GAME = 5        # exercises from one game at most
 CLOSE = 0.5         # moves within this many points of the best one are right answers too
 OPENING = 40        # moves of the opening
+# Exercises are mostly about fights, life and death first: a mistake ranks by the points it lost times its kind's
+# weight (the review weighs the other way, see review.FOCUS)
+FOCUS = {'song-chet': 2.0, 'tesuji': 1.5, 'noi-cat': 1.0, 'khai-cuoc': 0.5, 'dai-cuc': 0.5}
 KINDS = {'song-chet': 'Sống chết', 'noi-cat': 'Nối / cắt', 'tesuji': 'Tesuji', 'khai-cuoc': 'Khai cuộc',
          'dai-cuc': 'Hướng đi / đại cục'}
 _lock = threading.Lock()
@@ -65,18 +68,21 @@ def classify(board, who, move, number):
 
 
 def from_review(game, review, sides, by):
-    """Exercises from a finished review: the biggest mistakes of `sides`, each the position before it."""
+    """Exercises from a finished review: the mistakes of `sides` searched in full (the review's list and the fights
+    searched for the exercises), life and death first (FOCUS), each the position before it."""
     found = []
-    for who in sides:
-        for m in review.get('mistakes', {}).get(who, []):
-            if m['loss'] >= MIN_LOSS and m.get('best') and m['best'] != 'pass':
-                found.append(m)
+    for key, d in review.get('deep', {}).items():
+        i = int(key)
+        who = game['moves'][i][0]
+        if who in sides and d.get('loss', 0) >= MIN_LOSS and d.get('best') and d['best'] != 'pass':
+            board, _, ko = coach.final_position(game['base'], game['moves'][0][0], game['moves'][:i])
+            found.append((d['loss'] * FOCUS[classify(board, who, d['best'], i + 1)], i, d, board, ko))
     out = []
-    for m in sorted(found, key=lambda m: -m['loss'])[:PER_GAME]:
-        i, who = m['number'] - 1, m['color']
-        board, _, ko = coach.final_position(game['base'], game['moves'][0][0], game['moves'][:i])
-        deep = review.get('deep', {}).get(str(i), {})
-        answers = [m['best']] + [mv for mv in deep.get('good', []) if mv != m['best'] and mv != 'pass']
+    for _, i, d, board, ko in sorted(found, key=lambda x: (-x[0], x[1]))[:PER_GAME]:
+        who = game['moves'][i][0]
+        m = {'number': i + 1, 'move': game['moves'][i][1], 'loss': round(d['loss'], 1), 'best': d['best'],
+             'line': d.get('line')}
+        answers = [m['best']] + [mv for mv in d.get('good', []) if mv != m['best'] and mv != 'pass']
         key = json.dumps([board, who, m['best']])
         out.append({'id': hashlib.sha1(key.encode()).hexdigest()[:16], 'kind': classify(board, who, m['best'], m['number']),
                     'board_size': len(board), 'matrix': board, 'to_play': who, 'ko': ko and coach.gtp(*ko, len(board)),

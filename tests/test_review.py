@@ -83,7 +83,8 @@ def test_review_finds_top_mistakes_with_ten_move_lines():
     for who in ('B', 'W'):
         ms = r['mistakes'][who]
         assert 0 < len(ms) <= review.MISTAKES
-        assert [m['loss'] for m in ms] == sorted((m['loss'] for m in ms), reverse=True)
+        rank = [m['loss'] * review.FOCUS[m['kind']] for m in ms]   # the opening's development first
+        assert rank == sorted(rank, reverse=True)
         for m in ms:
             assert game['moves'][m['number'] - 1] == [who, m['move']]
             assert len(m['line']) == review.LINE and m['line'][0] == m['best']

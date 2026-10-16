@@ -34,10 +34,9 @@ def test_classify_by_the_shape_around_the_answer():
 def test_exercises_from_a_review_shared_by_every_user():
     moves = [['B', 'E5'], ['W', 'C3'], ['B', 'G7'], ['W', 'C7'], ['B', 'G3']]
     game = review.game_from_moves([[0] * 9 for _ in range(9)], moves, 7.5, 'me', 'AI 3k')
-    r = {'status': 'done', 'deep': {'3': {'good': ['D7', 'C6']}},
-         'mistakes': {'B': [{'number': 3, 'color': 'B', 'move': 'G7', 'loss': 1.5, 'best': 'C5', 'line': ['C5']}],
-                      'W': [{'number': 4, 'color': 'W', 'move': 'C7', 'loss': 6.0, 'best': 'D6', 'line': ['D6', 'E6']},
-                            {'number': 2, 'color': 'W', 'move': 'C3', 'loss': 3.0, 'best': 'pass', 'line': []}]}}
+    r = {'status': 'done', 'deep': {'2': {'loss': 1.5, 'best': 'C5', 'line': ['C5']},
+                                    '3': {'loss': 6.0, 'best': 'D6', 'line': ['D6', 'E6'], 'good': ['D7', 'C6']},
+                                    '1': {'loss': 3.0, 'best': 'pass', 'line': []}}}
     assert exercises.from_review(game, r, ['B'], 'me') == []                 # 1.5 points: too small
     (e,) = exercises.from_review(game, r, ['B', 'W'], 'me')                  # a pass is no exercise
     assert e['to_play'] == 'W' and e['answers'] == ['D6', 'D7', 'C6'] and e['last'] == 'G7' and e['number'] == 4
@@ -58,3 +57,20 @@ def test_exercises_from_a_review_shared_by_every_user():
 
     assert not exercises.delete(ids[0], 'b@x.com')                           # only its owner or an admin
     assert exercises.delete(ids[0], 'a@x.com') and exercises.listing('a@x.com') == []
+
+
+def test_exercises_favour_life_and_death_and_the_review_the_opening(monkeypatch):
+    moves = [['B', 'E5'], ['W', 'C3'], ['B', 'G7'], ['W', 'C7'], ['B', 'G3'], ['W', 'A1']]
+    game = review.game_from_moves([[0] * 9 for _ in range(9)], moves, 7.5, 'me', 'AI 3k')
+    kinds = {2: 'khai-cuoc', 3: 'song-chet', 4: 'khai-cuoc', 5: 'tesuji'}   # by move number
+    monkeypatch.setattr(exercises, 'classify', lambda board, who, move, number: kinds[number])
+    deep = {'1': {'loss': 5.0, 'best': 'D5'}, '2': {'loss': 3.0, 'best': 'D6'}, '3': {'loss': 4.0, 'best': 'D4'},
+            '4': {'loss': 3.5, 'best': 'E4'}}
+    got = [e['number'] for e in exercises.from_review(game, {'deep': deep}, ['B', 'W'], 'me')]
+    assert got == [3, 5, 2, 4]          # life and death 6 > tesuji 5.25 > opening 2.5, 2 though it lost 5
+    # the review the other way round: the opening first
+    r = {'positions': {str(i): [0.5, 0, 'A1', 0, 0] for i in range(7)}, 'mistakes': {},
+         'deep': {k: {**v, 'line': [], 'kind': kinds[int(k) + 1]} for k, v in deep.items()}}
+    review._finish(game, r)
+    assert [m['number'] for m in r['mistakes']['W']] == [2, 4] and r['mistakes']['W'][0]['kind'] == 'khai-cuoc'
+    assert [m['number'] for m in r['mistakes']['B']] == [5, 3]   # fights still listed, by points lost

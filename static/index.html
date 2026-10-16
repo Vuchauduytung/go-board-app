@@ -124,6 +124,7 @@
   ol.mistakes li:first-child { border-top: 0; }
   ol.mistakes li.on { background: #f6f1e8; }
   ol.mistakes .loss { color: var(--err); font-weight: 700; }
+  ol.mistakes .kind { font-size: 12px; color: var(--muted); white-space: nowrap; }
   ol.mistakes .line { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .exfilter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 14px; }
   .exfilter button.chip { border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 999px; cursor: pointer; }
@@ -1352,6 +1353,8 @@ function gotoGameMove(k) {
 $('gameEnd').addEventListener('click', () => { gotoGameMove(game.moves.length); setStatus('ok', 'Đã về cuối ván gốc.'); });
 
 let reviewData = null, reviewSide = 'all', reviewing = null;
+const EX_ICON = { 'song-chet': '💀', 'noi-cat': '🔗', tesuji: '⚡', 'khai-cuoc': '🌅', 'dai-cuc': '🧭' };
+const KIND_NAME = { 'song-chet': 'Sống chết', 'noi-cat': 'Nối / cắt', tesuji: 'Tesuji', 'khai-cuoc': 'Khai cuộc', 'dai-cuc': 'Hướng đi' };
 // The mistakes shown: one side's or both, in the order they were played
 function shownMistakes() {
   const m = reviewData?.mistakes;
@@ -1367,8 +1370,8 @@ function showReview(r) {
   if (!game) return;
   const running = !!(r && r.status !== 'done' && (reviewing || r.done > 0));   // a review not started yet: no progress
   $('reviewInfo').textContent = !r ? '' : r.status === 'done'
-    ? `Đã review ${r.total - 1} nước (komi ${game.komi}). Chạm một lỗi để xem thế cờ trước nó và biến tốt nhất 10 nước.`
-    : !running ? 'Chưa review: KataGo GPU xem từng thế cờ, tìm 10 lỗi lớn nhất mỗi bên kèm biến tốt nhất.'
+    ? `Đã review ${r.total - 1} nước (komi ${game.komi}). Ưu tiên lỗi phát triển quân trong khai cuộc; chỗ đánh nhau sống chết có ở 🧩 Bài tập. Chạm một lỗi để xem thế cờ trước nó và biến tốt nhất 10 nước.`
+    : !running ? 'Chưa review: KataGo GPU xem từng thế cờ, tìm tối đa 10 lỗi mỗi bên kèm biến tốt nhất, ưu tiên lỗi phát triển quân trong khai cuộc.'
     : r.phase === 'scan' ? `KataGo đang xem từng thế cờ: ${r.done}/${r.total}…`
     : `Đang tính biến tốt nhất cho các lỗi lớn: ${r.deep_done}/${r.deep_total}…`;
   $('reviewProgress').hidden = !running;
@@ -1383,7 +1386,7 @@ function showReview(r) {
   const list = r?.status === 'done' ? shownMistakes() : [];
   $('mistakes').innerHTML = list.map((m, i) => `
     <li data-i="${i}">
-      <div><b>Nước ${m.number}</b>: ${m.color === 'B' ? '⚫' : '⚪'} ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
+      <div>${m.kind ? `<span class="kind">${EX_ICON[m.kind] || ''} ${KIND_NAME[m.kind] || ''}</span> ` : ''}<b>Nước ${m.number}</b>: ${m.color === 'B' ? '⚫' : '⚪'} ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
         · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${m.best || '—'}</b></div>
       <div class="line">Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');
@@ -2050,7 +2053,6 @@ $('jAsk').addEventListener('click', () => {
 // (exercises.py). The answers come only with an attempt; after it, the solution (KataGo's best line) steps over the
 // exercise's own board. ----
 let exAll = null, exKinds = {}, exOnly = null, exKind = 'all', ex = null;
-const EX_ICON = { 'song-chet': '💀', 'noi-cat': '🔗', tesuji: '⚡', 'khai-cuoc': '🌅', 'dai-cuc': '🧭' };
 const exDot = c => c === 'B' ? '⚫' : '⚪';
 
 async function loadExercises(force) {

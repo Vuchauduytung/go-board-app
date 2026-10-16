@@ -18,6 +18,12 @@ LINE = 10         # moves (both sides) in each mistake's best variation
 LINE_VISITS = 400  # per search when the browser asks for more of a best variation
 LINE_MAX = 300     # moves a best variation can be lengthened to
 GOOD = 0.5         # other moves within this many points of the best one, kept as right answers (exercises)
+# What the review is for: learning to develop in the opening, more than fights. A mistake ranks by the points it lost
+# times the weight of its kind (exercises.classify, by the shape around the best move): a group dying for 20 points
+# still shows, while fights of a few points give way to the opening's development mistakes. The exercises weigh the
+# other way (exercises.FOCUS); FIGHTS more of each side's biggest fights are searched too, for them.
+FOCUS = {'khai-cuoc': 2.0, 'dai-cuc': 1.0, 'noi-cat': 0.7, 'tesuji': 0.5, 'song-chet': 0.5}
+FIGHTS = 5
 RULES = {'japanese': 'japanese', 'chinese': 'chinese', 'korean': 'korean', 'aga': 'aga', 'nz': 'new-zealand',
          'new zealand': 'new-zealand', 'tromp-taylor': 'tromp-taylor'}
 
@@ -165,8 +171,14 @@ def extend_from(katago, base, first, line, count=LINE):
     return out[:count]
 
 
+def _board(game, i):
+    p = position(game, i)
+    return coach.final_position(p['matrix'], p['to_play'], p['moves'])[0]
+
+
 def _deepen(katago, game, review, i):
-    """A full search of the position before move i: exact loss and the best variation."""
+    """A full search of the position before move i: exact loss, the best variation and the kind of mistake."""
+    import exercises
     res = katago({**position(game, i), **coach.ROOT})
     if not res['moves']:
         return {'loss': _loss(review, i), 'best': None, 'line': []}
@@ -176,16 +188,27 @@ def _deepen(katago, game, review, i):
     good = [m['move'] for m in res['moves'][1:] if m['score_lead'] >= best['score_lead'] - GOOD
             and m['visits'] >= max(10, best['visits'] * 0.1)][:3]
     return {'loss': loss, 'best': best['move'], 'best_lead': best['score_lead'], 'good': good,
-            'line': _line(katago, game, i, best['pv'])}
+            'line': _line(katago, game, i, best['pv']),
+            'kind': exercises.classify(_board(game, i), game['moves'][i][0], best['move'], i + 1)}
 
 
 def _candidates(game, review):
+    """Each side's moves to search again: the CANDIDATES first by weighted loss, and its FIGHTS biggest fights."""
+    import exercises
     out = {'B': [], 'W': []}
-    for i, (who, _) in enumerate(game['moves']):
-        loss = _loss(review, i)
+    board, nxt = game['base'], game['moves'][0][0]
+    for i, (who, mv) in enumerate(game['moves']):
+        loss, best = _loss(review, i), review['positions'][str(i)][2]
         if loss > 0.5:
-            out[who].append((loss, i))
-    return {who: [i for _, i in sorted(c, reverse=True)[:CANDIDATES]] for who, c in out.items()}
+            kind = exercises.classify(board, who, best, i + 1) if best else 'dai-cuc'
+            out[who].append((loss * FOCUS[kind], loss if kind in ('song-chet', 'tesuji') else 0, i))
+        board, nxt, _ = coach.final_position(board, nxt, [[who, mv]])
+    pick = {}
+    for who, c in out.items():
+        first = [i for _, _, i in sorted(c, reverse=True)[:CANDIDATES]]
+        fights = [i for _, f, i in sorted(c, key=lambda x: -x[1])[:FIGHTS] if f > 0 and i not in first]
+        pick[who] = first + fights
+    return pick
 
 
 def _finish(game, review):
@@ -198,8 +221,8 @@ def _finish(game, review):
                 continue
             found.append({'number': i + 1, 'color': who, 'move': game['moves'][i][1], 'loss': round(d['loss'], 1),
                           'winrate_before': p[str(i)][0], 'winrate_after': round(1 - p[str(i + 1)][0], 4),
-                          'best': d['best'], 'line': d['line']})
-        review['mistakes'][who] = sorted(found, key=lambda m: -m['loss'])[:MISTAKES]
+                          'best': d['best'], 'line': d['line'], 'kind': d.get('kind', 'dai-cuc')})
+        review['mistakes'][who] = sorted(found, key=lambda m: -m['loss'] * FOCUS[m['kind']])[:MISTAKES]
     review.update(status='done', phase='done', finished_at=time.time())
 
 
