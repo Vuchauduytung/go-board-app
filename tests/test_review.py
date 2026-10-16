@@ -217,3 +217,26 @@ def test_joseki_review_on_the_cpu_lists_where_corners_left_the_joseki():
                                   [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'D3']], 6.5, 'a', 'b')
     assert review.joseki_needs(good, JOSEKI_NODES) == [] and review.joseki_results(good, {}, JOSEKI_NODES) == []
     assert review._quarter((9, 9)) == 0 and review._quarter((18, 0)) == 3
+
+
+def test_joseki_line_goes_on_through_the_deepened_tree_with_few_tenukis():
+    # the joseki ends (settled), Black tenukis, White plays on in the corner, Black answers, then the corner is done
+    deep = dict(JOSEKI_NODES)
+    end = 'Q16 R17 R16 Q17 P16 O18'
+    deep[end] = {'settled': True, 'next': [{'move': 'D4', 'tenuki': True, 'rating': 'best'}]}
+    deep[end + ' D4'] = {'settled': False, 'next': [{'move': 'O17', 'rating': 'best'}]}
+    deep[end + ' D4 O17'] = {'settled': False, 'next': [{'move': 'N17', 'rating': 'best'}]}
+    deep[end + ' D4 O17 N17'] = {'settled': True, 'next': [{'move': 'D16', 'tenuki': True, 'rating': 'best'}]}
+    deep[end + ' D4 O17 N17 D16'] = {'settled': True, 'next': []}
+    moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'F3']]
+    game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
+    (o,) = review.joseki_results(game, {}, deep)
+    line = [m for _, m in o['joseki']]
+    assert line[:3] != [] and line[3] == 'tenuki' and len(line) == 6 and o['ends']   # no trailing tenuki
+    assert [c for c, _ in o['joseki']] == ['W', 'B', 'W', 'B', 'W', 'B']
+    review_tenukis, review.JOSEKI_TENUKI = review.JOSEKI_TENUKI, 0
+    try:
+        (o,) = review.joseki_results(game, {}, deep)
+        assert len(o['joseki']) == 3
+    finally:
+        review.JOSEKI_TENUKI = review_tenukis

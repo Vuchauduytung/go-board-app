@@ -17,6 +17,7 @@ CANDIDATES = 15   # per side, searched again more deeply before the 10 are picke
 LINE = 10         # moves (both sides) in each mistake's best variation
 LINE_VISITS = 400  # per search when the browser asks for more of a best variation
 LINE_MAX = 300     # moves a best variation can be lengthened to
+GOOD = 0.5         # other moves within this many points of the best one, kept as right answers (exercises)
 RULES = {'japanese': 'japanese', 'chinese': 'chinese', 'korean': 'korean', 'aga': 'aga', 'nz': 'new-zealand',
          'new zealand': 'new-zealand', 'tromp-taylor': 'tromp-taylor'}
 
@@ -172,7 +173,9 @@ def _deepen(katago, game, review, i):
     best, played = res['moves'][0], game['moves'][i][1]
     mine = next((m for m in res['moves'] if m['move'] == played and m['visits'] >= 2), None)
     loss = _loss(review, i, best['score_lead'], mine and mine['score_lead'])
-    return {'loss': loss, 'best': best['move'], 'best_lead': best['score_lead'],
+    good = [m['move'] for m in res['moves'][1:] if m['score_lead'] >= best['score_lead'] - GOOD
+            and m['visits'] >= max(10, best['visits'] * 0.1)][:3]
+    return {'loss': loss, 'best': best['move'], 'best_lead': best['score_lead'], 'good': good,
             'line': _line(katago, game, i, best['pv'])}
 
 
@@ -210,7 +213,8 @@ OPENING_MOVES = 40
 OPENING_LOSS = 1.0
 CORNER_MOVES = 8      # moves of a corner searched from where it left the joseki
 CORNERS = (('trên-phải', False, False), ('trên-trái', False, True), ('dưới-phải', True, False), ('dưới-trái', True, True))
-JOSEKI_LINE = 10
+JOSEKI_LINE = 30     # the joseki to play is followed through the deepened tree up to this many moves…
+JOSEKI_TENUKI = 2    # …with at most this many tenukis in it (the corner's local moves are always preferred)
 
 
 def _turn(rc, flip_r, flip_c, n=19):
@@ -291,14 +295,19 @@ def joseki_results(game, positions, nodes):
         if kids and kids[0]['move'] == t:
             continue
         back = lambda mv: coach.gtp(*_turn(joseki.rc(joseki.mirror(mv) if c['diag'] else mv), c['fr'], c['fc']), 19)
-        line, key = [], ' '.join(c['seq'])
-        for _ in range(JOSEKI_LINE):
-            n = nodes.get(key)
-            nxt = [k for k in (n or {}).get('next', []) if not k.get('tenuki')]
-            if not n or not nxt or (n.get('settled') and line):
-                break
-            line.append(nxt[0]['move'])
-            key += ' ' + nxt[0]['move']
+        line, key, tenukis = [], ' '.join(c['seq']), 0
+        while len(line) < JOSEKI_LINE:
+            nxt = (nodes.get(key) or {}).get('next', [])
+            here = [k for k in nxt if not k.get('tenuki')]
+            if not here:
+                if not nxt or tenukis >= JOSEKI_TENUKI:
+                    break
+                tenukis += 1
+            k = (here or nxt)[0]
+            line.append(None if k.get('tenuki') else k['move'])
+            key += ' ' + k['move']
+        while line and line[-1] is None:   # a line never ends on a tenuki
+            line.pop()
         colors = [w if k % 2 == 0 else coach.OTHER[w] for k in range(len(line))]
         bad = next((j for j in c['after'] if (loss(j) or 0) >= OPENING_LOSS), None)
         mine = next((k for k in kids if k['move'] == t), None)
@@ -307,8 +316,9 @@ def joseki_results(game, positions, nodes):
                     'number': None if bad is None else bad + 1, 'color': None if bad is None else game['moves'][bad][0],
                     'move': None if bad is None else game['moves'][bad][1],
                     'loss': None if bad is None else round(loss(bad), 1),
-                    'joseki': [[col, back(x)] for col, x in zip(colors, line)],
-                    'ends': bool(nodes.get(key, {}).get('settled')), 'tenuki': bool(node.get('settled')) and not line,
+                    'joseki': [[col, back(x) if x else 'tenuki'] for col, x in zip(colors, line)],
+                    'ends': bool(nodes.get(key, {}).get('settled')) or not (nodes.get(key) or {}).get('next'),
+                    'tenuki': bool(node.get('settled')) and not line,
                     'played_rating': mine and mine['rating'], 'known': len(c['seq'])})
     return sorted(out, key=lambda o: o['left'])
 

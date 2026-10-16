@@ -20,6 +20,7 @@ services:
     environment:
       DATA_DIR: /data/scans
       SESSIONS_DIR: /data/sessions
+      EXERCISES_DIR: /data/exercises   # the shared exercise bank
       BOOK_PAGES_DIR: /books/pages
       VALKEY_URL: redis://valkey:6379/0
       # trust the sign-in header of the proxy in use, and only that one

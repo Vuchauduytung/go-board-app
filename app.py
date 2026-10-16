@@ -48,6 +48,7 @@ from pydantic import BaseModel
 import accounts
 import bot
 import coach
+import exercises
 import kgcache
 import review
 import score
@@ -991,6 +992,56 @@ def best_line(body: BestLineIn, user: str = Depends(current_user)):
     except KataGoError as ex:
         raise HTTPException(ex.status, str(ex))
     return {'moves': more}
+
+
+# ---- 🧩 exercises from the users' mistakes (exercises.py): made from a finished game review, in one bank every
+# user can browse and solve ----
+@app.post('/api/sessions/{sid}/exercises')
+def session_exercises(sid: str, user: str = Depends(current_user)):
+    """The exercises from this game's review (made once, when first asked for after the review is done): a game
+    against the AI gives the player's mistakes, an SGF game both sides'."""
+    s = _own_session(user, sid)
+    r, game = s.get('review'), s.get('game')
+    if not game or not r or r.get('status') != 'done':
+        raise HTTPException(400, 'Review ván xong mới có bài tập')
+    if r.get('exercises') is None:
+        p = s.get('play')
+        sides = ['B' if p['ai'] == 'W' else 'W'] if p else ['B', 'W']
+        r['exercises'] = exercises.add(exercises.from_review(game, r, sides, feedback.display_name(user)), user)
+        sessions.set_review(user, sid, r)
+    return {'items': exercises.listing(user, r['exercises'])}
+
+
+@app.get('/api/exercises')
+def list_exercises(user: str = Depends(current_user)):
+    return {'kinds': exercises.KINDS, 'items': exercises.listing(user)}
+
+
+@app.get('/api/exercises/{eid}')
+def get_exercise(eid: str, user: str = Depends(current_user)):
+    e = exercises.get(eid)
+    if not e:
+        raise HTTPException(404, 'Không tìm thấy bài tập')
+    return exercises.problem(e, user)
+
+
+class AttemptIn(BaseModel):
+    move: Optional[str] = None   # the answer ("Q16"); none: show the solution
+
+
+@app.post('/api/exercises/{eid}/attempt')
+def attempt_exercise(eid: str, body: AttemptIn, user: str = Depends(current_user)):
+    res = exercises.attempt(eid, user, body.move)
+    if res is None:
+        raise HTTPException(404, 'Không tìm thấy bài tập')
+    return res
+
+
+@app.delete('/api/exercises/{eid}')
+def delete_exercise(eid: str, user: str = Depends(current_user)):
+    if not exercises.delete(eid, user):
+        raise HTTPException(404, 'Không tìm thấy bài tập của bạn')
+    return {'ok': True}
 
 
 @app.get('/api/joseki')

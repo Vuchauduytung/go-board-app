@@ -125,6 +125,13 @@
   ol.mistakes li.on { background: #f6f1e8; }
   ol.mistakes .loss { color: var(--err); font-weight: 700; }
   ol.mistakes .line { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .exfilter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 14px; }
+  .exfilter button.chip { border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+  .exfilter button.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .exfilter label { display: inline-flex; gap: 4px; align-items: center; margin-right: 8px; }
+  ol.mistakes .solved { color: var(--ok); font-weight: 700; }
+  #exBoard { width: 100%; max-width: 640px; display: block; margin: 0 auto; touch-action: manipulation;
+           -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   ol.mistakes .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .stars { display: flex; gap: 4px; margin-bottom: 10px; }
   .stars button { border: 0; background: none; font-size: 34px; line-height: 1; color: #d9cfbf; cursor: pointer; padding: 0 2px; }
@@ -237,6 +244,7 @@
   <nav class="tabs" id="tabs">
     <button type="button" data-tab="scan" class="on">📷 Nhận dạng</button>
     <button type="button" data-tab="joseki">📘 Định thức</button>
+    <button type="button" data-tab="ex">🧩 Bài tập</button>
     <button type="button" data-tab="reviews">⭐ Đánh giá</button>
   </nav>
   <div id="tab-scan">
@@ -338,6 +346,7 @@
         <button class="src" type="button" id="gameEnd">⏭ Về cuối ván gốc</button>
       </div>
       <ol class="mistakes" id="mistakes"></ol>
+      <button class="btn secondary field" type="button" id="exFromGame" hidden>🧩 Bài tập từ các lỗi của ván này</button>
       <div id="josekiBox" hidden>
         <h2 style="margin-top:14px">📘 Review định thức <span class="muted" style="font-weight:400;font-size:13px">· KataGo CPU</span></h2>
         <div class="muted" id="jrInfo" style="font-size:13px"></div>
@@ -361,7 +370,7 @@
       <button type="button" id="navFwd10" title="Tiến 10 nước">▶▶</button>
       <button type="button" id="navLast" title="Tới cuối nhánh đang sáng (End)">⏭</button>
     </div>
-    <label class="anon muted" style="font-size:13px"><input type="checkbox" id="confirmToggle"> Chạm để chọn điểm, bấm ✓ để đặt quân (tránh bấm nhầm)</label>
+    <label class="anon muted" style="font-size:13px"><input type="checkbox" id="confirmToggle"> Chạm để chọn điểm, bấm ✓ hoặc <b>nhấn giữ</b> để đặt quân (tránh bấm nhầm)</label>
     <div class="vars" id="varsBox" hidden>
       <h3><span>🔀 Biến thể trong ván này <span class="muted" id="varCount"></span></span>
         <button type="button" id="varBack" hidden title="Về thế cờ trước khi xem biến">↶ Thế cờ trước</button></h3>
@@ -455,6 +464,41 @@
         <button class="btn accent field" type="button" id="jAsk">💬 Hỏi trợ lý</button>
       </div>
       <div class="chatlog field" id="jLog"></div>
+    </section>
+  </div>
+
+  <div id="tab-ex" hidden>
+    <section class="card">
+      <div class="boardhead"><h2>🧩 Bài tập</h2><span class="muted" id="exInfo"></span></div>
+      <p class="muted" style="margin:0 0 8px">Thế cờ ngay trước các lỗi lớn trong những ván đã review của mọi người: tìm nước KataGo
+        cho là tốt nhất. Kho chung, ai cũng giải được.</p>
+      <div class="exfilter" id="exKinds"></div>
+      <div class="exfilter">
+        <label><input type="checkbox" id="exUnsolved"> Chưa giải</label>
+        <label><input type="checkbox" id="exMine"> Từ ván của tôi</label>
+        <button class="src" type="button" id="exAllBtn" hidden>Xem cả kho</button>
+      </div>
+      <ol class="mistakes" id="exList"></ol>
+    </section>
+    <section class="card" id="exSolve" hidden>
+      <div class="boardhead"><h2 id="exTitle"></h2><span class="muted" id="exMeta"></span></div>
+      <svg id="exBoard" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="mode field" id="exStatus"></div>
+      <div class="row">
+        <button class="btn accent field" type="button" id="exAnswer" hidden></button>
+        <button class="btn secondary field" type="button" id="exReveal">💡 Xem đáp án</button>
+      </div>
+      <div class="nav field" id="exNav" hidden>
+        <button type="button" id="exFirst" title="Về thế cờ đề bài">⏮</button>
+        <button type="button" id="exBack" title="Lùi 1 nước">◀</button>
+        <button type="button" id="exFwd" title="Tiến 1 nước">▶</button>
+        <button type="button" id="exLast" title="Tới hết biến">⏭</button>
+      </div>
+      <div class="muted" id="exLine"></div>
+      <div class="row">
+        <button class="btn secondary field" type="button" id="exNext">Bài tiếp ›</button>
+        <button class="btn secondary field" type="button" id="exDelete" hidden>🗑 Xoá bài</button>
+      </div>
     </section>
   </div>
 
@@ -805,13 +849,13 @@ $('board').addEventListener('click', e => {
   if (cand) { followCandidate(cand); return; }   // a suggestion of 💡 Gợi ý: play it, then ▶ follows KataGo
   const hit = !playing && kataLine?.window?.find(w => w.r === r && w.c === c);
   if (hit) { playLineTo(hit.idx); return; }   // a numbered move of KataGo's line: go on along it
-  if (confirmMoves && !(pending && pending.r === r && pending.c === c)) {   // first tap: only choose the point
+  if (confirmMoves) {   // a tap only chooses the point: ✓ Đặt quân, or a long-press, plays it
     if (matrix[r][c]) { setStatus('err', 'Điểm này đã có quân. Chạm giữ quân để xoá, hoặc ◀ để lùi.'); return; }
     pending = { r, c };
     render();
     return;
   }
-  commitMove(r, c);   // a second tap on the same point confirms too
+  commitMove(r, c);
 });
 
 // The move itself: `toPlay` plays (r, c); in a game against the AI, the AI answers
@@ -837,7 +881,8 @@ $('confirmToggle').addEventListener('change', () => {
   render();
 });
 
-// Long-press a stone to remove it (e.g. a stone recognised by mistake); recorded so Undo puts it back
+// Long-press a stone to remove it (e.g. a stone recognised by mistake); recorded so Undo puts it back.
+// Long-press an empty point (with move confirmation on): play it at once, as ✓ Đặt quân would
 let pressTimer = null, pressAt = null, suppressClick = false;
 function removeStone(r, c) {
   const was = takeOff(r, c);
@@ -847,13 +892,23 @@ function removeStone(r, c) {
   render();
   saveSoon();
 }
+function canPlayHere(r, c) {
+  if (matrix[r][c] || !confirmMoves || pickMode || scoring) return false;
+  if (inGame() && (play.thinking || toPlay === play.ai)) return false;
+  return !(!inGame() && (sugg?.moves.some(mv => mv.row === r && mv.col === c) || kataLine?.window?.some(w => w.r === r && w.c === c)));
+}
 $('board').addEventListener('pointerdown', e => {
-  if (inGame() || scoring) return;   // no long-press removal while playing the AI or counting
+  suppressClick = false;   // a new press: the last long-press may have ended with no click (the board was redrawn)
   const t = e.target.dataset;
-  if (t.r === undefined || pickMode || !matrix[+t.r][+t.c]) return;
+  if (t.r === undefined) return;
+  const r = +t.r, c = +t.c, stone = !!matrix[r][c];
+  if (stone ? inGame() || scoring || pickMode : !canPlayHere(r, c)) return;   // no removal while playing the AI or counting
   clearTimeout(pressTimer);
   pressAt = [e.clientX, e.clientY];
-  pressTimer = setTimeout(() => { pressTimer = null; suppressClick = true; removeStone(+t.r, +t.c); }, 500);
+  pressTimer = setTimeout(() => {
+    pressTimer = null; suppressClick = true;
+    if (stone) removeStone(r, c); else { navigator.vibrate?.(30); commitMove(r, c); }
+  }, 500);
 });
 $('board').addEventListener('pointermove', e => {   // a drag (page scroll) is not a long-press
   if (pressTimer && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 10) { clearTimeout(pressTimer); pressTimer = null; }
@@ -1322,7 +1377,7 @@ function showReview(r) {
   }
   $('reviewRun').hidden = r?.status === 'done' || !!reviewing;
   $('reviewRun').textContent = r && r.done ? '▶ Tiếp tục review' : '▶ Review ván này';
-  $('reviewSides').hidden = r?.status !== 'done';
+  $('reviewSides').hidden = $('exFromGame').hidden = r?.status !== 'done';
   for (const b of $('reviewSide').children) b.classList.toggle('on', b.dataset.side === reviewSide);
   const list = r?.status === 'done' ? shownMistakes() : [];
   $('mistakes').innerHTML = list.map((m, i) => `
@@ -1346,9 +1401,9 @@ function showJoseki(jr) {
   if (!game) return;
   const running = !!josekiRunning || (jr && jr.status !== 'done' && jr.done > 0);
   $('jrInfo').textContent = jr?.status === 'done'
-    ? 'Các góc rời định thức trong 40 nước đầu, so với cây định thức của KataGo. Chạm một góc để xem: định thức hiện số 1, 2, 3… viền xanh.'
+    ? 'Các góc đi sai định thức trong 40 nước đầu, so với cây định thức của KataGo: nước nên đi và cả biến định thức đến khi góc xong. Chạm một góc để xem: định thức hiện số 1, 2, 3… viền xanh, ▶ để đi theo.'
     : running ? `KataGo CPU đang xét các nước ở góc: ${jr?.done || 0}/${jr?.total || '…'}…`
-    : 'Chạy riêng với review ván, bằng KataGo CPU của máy chủ (khoảng 1–4 phút): mỗi góc rời định thức ở đâu, nước sai sau đó và định thức nên đi.';
+    : 'Chạy riêng với review ván, bằng KataGo CPU của máy chủ (khoảng 1–4 phút): mỗi góc nên đi ở đâu thay cho nước sai định thức, và cả biến định thức đến khi góc xong.';
   $('jrProgress').hidden = !running;
   if (running && jr?.total) $('jrProgress').firstElementChild.style.width = Math.round(100 * jr.done / jr.total) + '%';
   $('jrRun').hidden = jr?.status === 'done' || !!josekiRunning;
@@ -1357,11 +1412,11 @@ function showJoseki(jr) {
   const op = jr?.status === 'done' ? (jr.results || []) : [];
   $('opening').innerHTML = op.map((o, i) => `
     <li data-o="${i}">
-      <div><b>Góc ${o.corner}</b> · rời định thức ở nước ${o.left}: ${dot(o.left_color)}<b>${o.left_move}</b>
+      <div><b>Góc ${o.corner}</b> · nước ${o.left}: nên đi ${o.tenuki || !o.joseki.length ? `chỗ khác (tenuki)` : `${dot(o.joseki[0][0])}<b>${o.joseki[0][1]}</b>`}
+        <span class="muted">(đã đi ${dot(o.left_color)}${o.left_move})</span>
         ${o.left_loss == null ? '' : o.left_loss >= 1 ? `<span class="loss">mất ${o.left_loss} điểm</span>` : `<span class="muted">mất ${o.left_loss} điểm, chơi được</span>`}</div>
       ${o.number && o.number !== o.left ? `<div class="line">Nước sai sau đó: nước ${o.number} ${dot(o.color)}${o.move} <span class="loss">mất ${o.loss} điểm</span></div>` : ''}
-      <div class="line">${o.tenuki ? 'Định thức ở góc này đã xong tại đây: nên đi chỗ khác (tenuki).'
-        : `Định thức nên đi từ nước ${o.left}: ${o.joseki.map(([c, mv], k) => `${k + 1}.${dot(c)}${mv}`).join(' ')}${o.ends ? ' → hết định thức, đi chỗ khác' : ' …'}`}</div>
+      ${o.tenuki || !o.joseki.length ? '' : `<div class="line">Đi hết định thức: ${o.joseki.map(([c, mv], k) => `${k + 1}.${dot(c)}${mv === 'tenuki' ? 'đi chỗ khác' : mv}`).join(' ')}${o.ends ? ' → góc xong, đi chỗ khác' : ' …'}</div>`}
     </li>`).join('') || (jr?.status === 'done' ? '<li class="muted">Các góc đều đi đúng định thức (hoặc rời bằng tenuki), không có gì để so.</li>' : '');
   requestAnimationFrame(() => fitThree($('opening')));
 }
@@ -1397,11 +1452,12 @@ $('opening').addEventListener('click', e => {
   document.querySelectorAll('#opening li').forEach(x => x.classList.toggle('on', x === li));
   if (o.joseki.length) {
     followMode = 'kata';
-    kataLine = { moves: o.joseki.map(([, m]) => m), first: who, base: played.slice(), k: 0, matrix: clone(matrix), engine: 'cpu' };
+    kataLine = { moves: o.joseki.map(([, m]) => m === 'tenuki' ? 'pass' : m), first: who, base: played.slice(), k: 0, matrix: clone(matrix),
+                 engine: 'cpu', ended: !!o.ends };
   }
   render();
-  setStatus('info', o.tenuki ? `Thế cờ trước nước ${at}: góc ${o.corner} đã xong định thức, ${NAME[who]} nên đi chỗ khác thay vì ${mv}.`
-    : `Thế cờ trước nước ${at}: thay vì ${mv}, định thức ở góc ${o.corner} là số 1–${Math.min(WINDOW, o.joseki.length)} viền xanh`
+  setStatus('info', o.tenuki || !o.joseki.length ? `Thế cờ trước nước ${at}: góc ${o.corner} đã xong định thức, ${NAME[who]} nên đi chỗ khác thay vì ${mv}.`
+    : `Thế cờ trước nước ${at}: nên đi ${o.joseki[0][1]} thay vì ${mv} · định thức ở góc ${o.corner} là các số viền xanh (đi hết ${o.joseki.length} nước, bỏ lượt = đi chỗ khác)`
       + (o.number && at !== o.number ? ` (nước sai sau đó: nước ${o.number})` : '') + ' · chạm số hoặc ▶ để đi theo.');
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
@@ -1989,6 +2045,206 @@ $('jAsk').addEventListener('click', () => {
   chatRequest(q, { log: $('jLog'), btn: $('jAsk'), body: {}, waitText: 'Đang tra sách và tài liệu định thức…' });
 });
 
+// ---- 🧩 exercises: the position before a big mistake of a reviewed game, from every user's games, in one bank
+// (exercises.py). The answers come only with an attempt; after it, the solution (KataGo's best line) steps over the
+// exercise's own board. ----
+let exAll = null, exKinds = {}, exOnly = null, exKind = 'all', ex = null;
+const EX_ICON = { 'song-chet': '💀', 'noi-cat': '🔗', tesuji: '⚡', 'khai-cuoc': '🌅', 'dai-cuc': '🧭' };
+const exDot = c => c === 'B' ? '⚫' : '⚪';
+
+async function loadExercises(force) {
+  if (!exAll || force) {
+    $('exList').innerHTML = '<li class="muted"><span class="spinner"></span>Đang tải kho bài tập…</li>';
+    try { const j = await apiJson('api/exercises'); exAll = j.items; exKinds = j.kinds; }
+    catch (e) { $('exList').innerHTML = `<li class="muted">Chưa tải được kho bài tập: ${esc(e.message)}</li>`; return; }
+  }
+  renderExList();
+}
+function exShown() {
+  return exAll.filter(e => (!exOnly || exOnly.includes(e.id)) && (exKind === 'all' || e.kind === exKind)
+    && (!$('exUnsolved').checked || !e.mine?.ok) && (!$('exMine').checked || e.own));
+}
+function renderExList() {
+  if (!exAll) return;
+  const base = exAll.filter(e => !exOnly || exOnly.includes(e.id)), count = k => base.filter(e => e.kind === k).length;
+  $('exKinds').innerHTML = [['all', `Tất cả (${base.length})`], ...Object.entries(exKinds).filter(([k]) => count(k))
+    .map(([k, name]) => [k, `${EX_ICON[k] || ''} ${name} (${count(k)})`])]
+    .map(([k, t]) => `<button type="button" class="chip${k === exKind ? ' on' : ''}" data-k="${k}">${t}</button>`).join('');
+  const solved = exAll.filter(e => e.mine?.ok).length;
+  $('exInfo').textContent = `${exAll.length} bài · bạn đã giải ${solved}`;
+  $('exAllBtn').hidden = !exOnly;
+  const list = exShown();
+  $('exList').innerHTML = (exOnly ? `<li class="muted" style="cursor:default">Bài tập từ ván vừa review (${exOnly.length} bài).</li>` : '')
+    + list.map(e => `
+    <li data-ex="${e.id}" class="${ex?.id === e.id ? 'on' : ''}">
+      <div>${EX_ICON[e.kind] || '🧩'} <b>${esc(e.kind_name)}</b> · ${exDot(e.to_play)} ${NAME[e.to_play]} đi · ${e.board_size}×${e.board_size}
+        ${e.mine ? e.mine.ok ? '<span class="solved">✓ đã giải</span>' : '<span class="loss">✗ chưa đúng</span>' : ''}</div>
+      <div class="line">Từ ván của ${esc(e.by)} · nước ${e.number}, trong ván mất ${e.loss} điểm · ${e.tried ? `${e.solvers}/${e.tried} người giải đúng` : 'chưa ai giải'}</div>
+    </li>`).join('') || `<li class="muted">${exAll.length ? 'Không có bài nào theo bộ lọc này.' : 'Kho chưa có bài: review một ván (📋 Review ván), các lỗi lớn sẽ thành bài tập.'}</li>`;
+  requestAnimationFrame(() => fitThree($('exList')));
+}
+$('exKinds').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) { exKind = b.dataset.k; renderExList(); } });
+$('exUnsolved').addEventListener('change', renderExList);
+$('exMine').addEventListener('change', renderExList);
+$('exAllBtn').addEventListener('click', () => { exOnly = null; renderExList(); });
+$('exList').addEventListener('click', e => { const li = e.target.closest('li[data-ex]'); if (li) openExercise(li.dataset.ex); });
+
+async function openExercise(id) {
+  $('exSolve').hidden = false;
+  $('exStatus').innerHTML = '<span class="spinner"></span>Đang mở bài…';
+  try { ex = { ...(await apiJson(`api/exercises/${id}`)), wrong: [], pick: null, res: null, step: 0 }; }
+  catch (e) { $('exStatus').textContent = 'Không mở được bài: ' + e.message; return; }
+  renderExList();
+  renderExercise();
+  $('exSolve').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+const exRC = (mv, n) => mv && mv !== 'pass' ? [n - parseInt(mv.slice(1), 10), COLS.indexOf(mv[0])] : null;
+function exBoardAt(k) {   // the exercise's board after k moves of its solution, captures included
+  const saved = koBoard;
+  koBoard = null;
+  try {
+    let m = clone(ex.matrix), who = ex.to_play;
+    for (const mv of ex.res.line.slice(0, k)) {
+      const rc = exRC(mv, m.length);
+      if (rc) { const next = playMove(m, rc[0], rc[1], who === 'B' ? 1 : 2); if (typeof next === 'string') break; m = next; }
+      who = who === 'B' ? 'W' : 'B';
+    }
+    return m;
+  } finally { koBoard = saved; }
+}
+function renderExercise() {
+  if (!ex) return;
+  const n = ex.matrix.length, s = 30, mg = 34, W = mg * 2 + s * (n - 1), shown = !!ex.res?.shown;
+  const board = shown ? exBoardAt(ex.step) : ex.matrix, X = c => mg + c * s;
+  let h = `<rect width="${W}" height="${W}" fill="var(--wood)"/>`;
+  for (let i = 0; i < n; i++) {
+    const p = mg + i * s;
+    h += `<line x1="${mg}" y1="${p}" x2="${W - mg}" y2="${p}" stroke="var(--wood-line)" stroke-width="${i % (n - 1) ? 1 : 2}"/>`;
+    h += `<line x1="${p}" y1="${mg}" x2="${p}" y2="${W - mg}" stroke="var(--wood-line)" stroke-width="${i % (n - 1) ? 1 : 2}"/>`;
+    h += `<text x="${p}" y="${mg - 20}" font-size="10" text-anchor="middle" fill="var(--wood-line)">${COLS[i]}</text>`;
+    h += `<text x="${mg - 25}" y="${p + 3.5}" font-size="10" text-anchor="middle" fill="var(--wood-line)">${n - i}</text>`;
+  }
+  for (const [r, c] of stars(n)) h += `<circle cx="${X(c)}" cy="${X(r)}" r="3" fill="var(--wood-line)"/>`;
+  const num = new Map();
+  if (shown) ex.res.line.slice(0, ex.step).forEach((mv, i) => { if (mv !== 'pass') num.set(mv, i + 1); });
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const v = board[r][c], x = X(c), y = X(r);
+    if (v) h += `<circle cx="${x}" cy="${y}" r="13.5" fill="${v === 1 ? '#141414' : '#fafafa'}" stroke="#333" stroke-width=".8"/>`;
+    const k = v && num.get(COLS[c] + (n - r));
+    if (k) h += `<text x="${x}" y="${y + 4.5}" font-size="12" font-weight="700" text-anchor="middle" fill="${v === 1 ? '#fff' : '#141414'}" pointer-events="none">${k}</text>`;
+    h += `<rect data-r="${r}" data-c="${c}" x="${x - s / 2}" y="${y - s / 2}" width="${s}" height="${s}" fill="transparent"/>`;
+  }
+  const last = exRC(ex.last, n);
+  if (last && !(shown && ex.step)) h += `<circle cx="${X(last[1])}" cy="${X(last[0])}" r="6" fill="none" stroke="var(--accent)" stroke-width="2.5" pointer-events="none"/>`;
+  for (const mv of ex.wrong) {
+    const rc = exRC(mv, n);
+    if (rc && !board[rc[0]][rc[1]]) h += `<text x="${X(rc[1])}" y="${X(rc[0]) + 6}" font-size="20" font-weight="700" text-anchor="middle" fill="var(--err)" pointer-events="none">×</text>`;
+  }
+  if (shown && !ex.step) ex.res.answers.forEach((mv, i) => {
+    const rc = exRC(mv, n);
+    if (rc) h += `<circle cx="${X(rc[1])}" cy="${X(rc[0])}" r="13" fill="none" stroke="var(--ok)" stroke-width="${i ? 2 : 3.5}" pointer-events="none"/>`;
+  });
+  if (ex.pick && !shown) {
+    const [r, c] = ex.pick, black = ex.to_play === 'B';
+    h += `<circle cx="${X(c)}" cy="${X(r)}" r="13.5" fill="${black ? 'rgba(20,20,20,.5)' : 'rgba(250,250,250,.75)'}" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="4 3" pointer-events="none"/>`;
+  }
+  $('exBoard').setAttribute('viewBox', `0 0 ${W} ${W}`);
+  $('exBoard').innerHTML = h;
+  $('exTitle').textContent = `${EX_ICON[ex.kind] || '🧩'} ${ex.kind_name}: ${NAME[ex.to_play]} đi`;
+  $('exMeta').textContent = `komi ${ex.komi} · từ ván của ${ex.by}`;
+  const pickName = ex.pick && COLS[ex.pick[1]] + (n - ex.pick[0]);
+  $('exAnswer').hidden = !ex.pick || shown;
+  $('exAnswer').textContent = `✓ Trả lời ${pickName || ''}`;
+  $('exReveal').hidden = shown;
+  $('exNav').hidden = !shown;
+  if (shown) {
+    const L = ex.res.line.length;
+    $('exFirst').disabled = $('exBack').disabled = !ex.step;
+    $('exFwd').disabled = $('exLast').disabled = ex.step >= L;
+    $('exLine').innerHTML = `Biến giải: ${ex.res.line.map((mv, i) => `${i < ex.step ? '<b>' : ''}${i + 1}.${exDot(i % 2 ? (ex.to_play === 'B' ? 'W' : 'B') : ex.to_play)}${mv}${i < ex.step ? '</b>' : ''}`).join(' ')}`;
+  } else $('exLine').textContent = '';
+  const ans = ex.res && `${exDot(ex.to_play)}<b>${ex.res.answers[0]}</b>${ex.res.answers.length > 1 ? ` (cũng đúng: ${ex.res.answers.slice(1).join(', ')})` : ''}`;
+  $('exStatus').innerHTML = !shown
+    ? (ex.wrong.length ? `❌ <b>${ex.wrong.at(-1)}</b> chưa đúng. Thử điểm khác, hoặc 💡 Xem đáp án.`
+      : `${exDot(ex.to_play)} <b>${NAME[ex.to_play]}</b> đi: tìm nước tốt nhất. Chạm một điểm rồi bấm ✓ Trả lời (hoặc nhấn giữ điểm đó).${ex.last ? ` Vòng cam: nước vừa đi (${ex.last}).` : ''}`)
+    : `${ex.res.ok ? '✅ <b>Đúng!</b> ' : ''}Đáp án: ${ans} · trong ván đã đi ${ex.res.played}, mất ${ex.res.loss} điểm · ▶ để xem biến giải.`;
+  $('exDelete').hidden = !(ex.own || me?.admin);
+}
+let exPress = null, exPressAt = null, exSuppress = false;   // long-press a point: answer it at once
+$('exBoard').addEventListener('pointerdown', e => {
+  exSuppress = false;   // a new press: the last long-press may have ended with no click
+  const t = e.target.closest('[data-r]');
+  if (!t || !ex || ex.res?.shown || ex.matrix[+t.dataset.r][+t.dataset.c]) return;
+  const r = +t.dataset.r, c = +t.dataset.c;
+  clearTimeout(exPress);
+  exPressAt = [e.clientX, e.clientY];
+  exPress = setTimeout(() => { exPress = null; exSuppress = true; navigator.vibrate?.(30); exAttempt(COLS[c] + (ex.matrix.length - r)); }, 500);
+});
+$('exBoard').addEventListener('pointermove', e => {
+  if (exPress && Math.hypot(e.clientX - exPressAt[0], e.clientY - exPressAt[1]) > 10) { clearTimeout(exPress); exPress = null; }
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $('exBoard').addEventListener(ev, () => { clearTimeout(exPress); exPress = null; });
+$('exBoard').addEventListener('contextmenu', e => e.preventDefault());
+$('exBoard').addEventListener('click', e => {
+  if (exSuppress) { exSuppress = false; return; }
+  const t = e.target.closest('[data-r]');
+  if (!t || !ex || ex.res?.shown) return;
+  const r = +t.dataset.r, c = +t.dataset.c;
+  if (ex.matrix[r][c]) return;
+  ex.pick = [r, c];
+  renderExercise();
+});
+async function exAttempt(move) {
+  const id = ex.id;
+  try {
+    const res = await apiJson(`api/exercises/${id}/attempt`, { method: 'POST', body: { move } });
+    if (ex?.id !== id) return;
+    const it = exAll?.find(e => e.id === id);
+    if (it) { if (!it.mine) it.tried++; if (res.mine.ok && !it.mine?.ok) it.solvers++; it.mine = res.mine; }
+    ex.pick = null;
+    if (move && !res.ok) { ex.wrong.push(move); ex.res = null; }
+    else { ex.res = { ...res, shown: true }; ex.step = res.ok ? 1 : 0; }
+    renderExList();
+    renderExercise();
+  } catch (err) { $('exStatus').textContent = 'Chưa gửi được: ' + err.message; }
+}
+$('exAnswer').addEventListener('click', () => { if (ex?.pick) exAttempt(COLS[ex.pick[1]] + (ex.matrix.length - ex.pick[0])); });
+$('exReveal').addEventListener('click', () => { if (ex) exAttempt(null); });
+const exGo = k => { ex.step = Math.max(0, Math.min(ex.res.line.length, k)); renderExercise(); };
+$('exFirst').addEventListener('click', () => exGo(0));
+$('exBack').addEventListener('click', () => exGo(ex.step - 1));
+$('exFwd').addEventListener('click', () => exGo(ex.step + 1));
+$('exLast').addEventListener('click', () => exGo(Infinity));
+$('exNext').addEventListener('click', () => {
+  const list = exShown(), i = list.findIndex(e => e.id === ex?.id), nxt = list.slice(i + 1).find(e => !e.mine?.ok) || list[i + 1];
+  if (nxt) openExercise(nxt.id); else $('exStatus').textContent = 'Hết bài trong danh sách này.';
+});
+$('exDelete').addEventListener('click', async () => {
+  if (!ex || !confirm('Xoá bài tập này khỏi kho chung?')) return;
+  try {
+    await apiJson(`api/exercises/${ex.id}`, { method: 'DELETE' });
+    exAll = exAll?.filter(e => e.id !== ex.id); ex = null;
+    $('exSolve').hidden = true;
+    renderExList();
+  } catch (err) { $('exStatus').textContent = 'Không xoá được: ' + err.message; }
+});
+// End of a review: the game's own exercises, made once from its mistakes
+$('exFromGame').addEventListener('click', async () => {
+  if (!session) return;
+  const b = $('exFromGame');
+  b.disabled = true;
+  try {
+    const j = await apiJson(`api/sessions/${session.id}/exercises`, { method: 'POST' });
+    if (!j.items.length) { setStatus('info', `Ván này không có lỗi nào từ 2 điểm trở lên${play ? ' của bạn' : ''}: chưa có bài tập. Xem kho chung ở tab 🧩 Bài tập.`); return; }
+    exOnly = j.items.map(e => e.id); exKind = 'all'; exAll = null;
+    $('exUnsolved').checked = $('exMine').checked = false;
+    $('tabs').querySelector('[data-tab="ex"]').click();
+    await loadExercises();
+    openExercise(exOnly[0]);
+  } catch (err) { setStatus('err', 'Chưa tạo được bài tập: ' + esc(err.message)); }
+  finally { b.disabled = false; }
+});
+
 // ---- signed-in user and today's usage ----
 function showMe(m) {
   if (!m) return;
@@ -2013,7 +2269,9 @@ $('tabs').addEventListener('click', e => {
   $('tab-scan').hidden = t !== 'scan';
   $('tab-joseki').hidden = t !== 'joseki';
   $('tab-reviews').hidden = t !== 'reviews';
+  $('tab-ex').hidden = t !== 'ex';
   if (t === 'reviews') loadReviews();
+  if (t === 'ex') loadExercises();
   if (t === 'joseki') loadJoseki();
 });
 
