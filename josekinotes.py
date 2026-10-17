@@ -18,6 +18,11 @@ FIELDS = (('purpose', 'Mục đích'), ('black', 'Đen được gì'), ('white',
           ('black_weak', 'Điểm yếu của Đen'), ('white_weak', 'Điểm yếu của Trắng'), ('next', 'Sau định thức'))
 SCHEMA = {'type': 'OBJECT', 'properties': {k: {'type': 'STRING'} for k, _ in FIELDS}, 'required': [k for k, _ in FIELDS]}
 STARTS = {'Q16': 'sao (4-4)', 'R16': 'tiểu mục (3-4)', 'R17': 'tam tam (3-3)', 'Q15': 'cao mục (4-5)', 'R15': 'mục ngoại (3-5)'}
+SECOND = {   # the usual answers to each start, by where they are (line from the top edge, line from the right edge)
+    'Q16': {(3, 3): 'đá tam tam (3-3) dưới quân sao', (6, 3): 'tiếp cận thấp quân sao',
+            (3, 6): 'tiếp cận thấp quân sao', (6, 4): 'tiếp cận cao quân sao', (4, 6): 'tiếp cận cao quân sao'},
+    'R16': {(3, 5): 'tiếp cận thấp tiểu mục', (4, 5): 'tiếp cận cao tiểu mục', (3, 6): 'tiếp cận thấp xa tiểu mục'},
+}
 ENGLISH = {'Q16': '4-4 point', 'R16': '3-4 point', 'R17': '3-3 point', 'Q15': '4-5 point', 'R15': '3-5 point'}
 PROMPT = """Bạn là thầy dạy cờ vây cho người Việt. Giải thích một định thức (joseki) ở góc trên-phải dưới đây: các quân \
 "đã có" là phần đầu định thức đã đi trên bàn; các nước đánh số 1, 2, 3… là phần tiếp theo (đúng số hiện trên bàn cờ \
@@ -46,6 +51,12 @@ def get(ex):
         return None
 
 
+def _lines(mv):
+    """(line from the top edge, line from the right edge), from 1."""
+    r, c = coach.parse_point(mv, 19)
+    return r + 1, 19 - c
+
+
 def describe(ex):
     """The corner for the model: its diagram (the top-right 11×11, numbered moves) and the moves in words."""
     board = [[0] * 19 for _ in range(19)]
@@ -67,11 +78,15 @@ def describe(ex):
             cells.append(f'{numbers[(r, c)]:>3}' if (r, c) in numbers and v else ' X ' if v == 1 else ' O ' if v == 2 else ' . ')
         rows.append(''.join(cells) + ('  ← mép trên' if r == 0 else ''))
     start = ex['before'][0][1] if ex['before'] else ex['moves'][0][1]
-    said = [f"Định thức bắt đầu bằng quân {STARTS.get(start, 'ở góc')} của {coach.NAMES[ex['first']]}."]
+    allm = ex['before'] + ex['moves']
+    second = SECOND.get(start, {}).get(_lines(allm[1][1])) if len(allm) > 1 and allm[1][1] != 'tenuki' else None
+    said = [f"Định thức bắt đầu bằng quân {STARTS.get(start, 'ở góc')} của {coach.NAMES[ex['first']]}"
+            + (f", rồi {coach.NAMES[allm[1][0]]} {second}" if second else '') + '.',
+            'Vị trí ghi (dòng tính từ mép trên × dòng tính từ mép phải); KHÔNG nhắc lại dạng này trong câu trả lời.']
+    where = lambda c, mv: f"{coach.NAMES[c]} " + ('đi chỗ khác (tenuki)' if mv == 'tenuki' else '(%d×%d)' % _lines(mv))
     if ex['before']:
-        said.append('Đã có trên bàn (theo thứ tự): ' + ', '.join(f"{coach.NAMES[c]}" for c, _ in ex['before']) + '.')
-    said.append('Tiếp theo: ' + ', '.join(f"{k}. {coach.NAMES[c]}{' đi chỗ khác (tenuki)' if mv == 'tenuki' else ''}"
-                                          for k, (c, mv) in enumerate(ex['moves'], 1)) + '.')
+        said.append('Đã có trên bàn (theo thứ tự): ' + ', '.join(where(c, mv) for c, mv in ex['before']) + '.')
+    said.append('Tiếp theo: ' + ', '.join(f"{k}. {where(c, mv)}" for k, (c, mv) in enumerate(ex['moves'], 1)) + '.')
     return ('Góc trên-phải (mép phải là cột cuối; X = Đen, O = Trắng, số = nước đánh số còn trên bàn):\n'
             + '\n'.join(rows) + '\n' + ' '.join(said))
 
