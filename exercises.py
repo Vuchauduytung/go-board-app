@@ -82,7 +82,9 @@ def from_review(game, review, sides, by):
         who = game['moves'][i][0]
         m = {'number': i + 1, 'move': game['moves'][i][1], 'loss': round(d['loss'], 1), 'best': d['best'],
              'line': d.get('line')}
-        answers = [m['best']] + [mv for mv in d.get('good', []) if mv != m['best'] and mv != 'pass']
+        answers = [m['best']] + [mv for mv in d.get('good', []) + [d.get('teach')]   # and the move taught at the level
+                                 if mv and mv not in (m['best'], 'pass')]
+        answers = list(dict.fromkeys(answers))
         key = json.dumps([board, who, m['best']])
         out.append({'id': hashlib.sha1(key.encode()).hexdigest()[:16], 'kind': classify(board, who, m['best'], m['number']),
                     'board_size': len(board), 'matrix': board, 'to_play': who, 'ko': ko and coach.gtp(*ko, len(board)),

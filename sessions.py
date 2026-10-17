@@ -160,6 +160,20 @@ def append_chat(user, sid, entry, variations=()):
     return _change(user, sid, fn)
 
 
+def seen_joseki(user):
+    """The joseki (tree keys) already proposed to the user by joseki reviews: the next ones prefer others."""
+    f = _dir(user) / 'joseki-seen.txt'
+    return set(f.read_text().split('\n')) - {''} if f.exists() else set()
+
+
+def add_seen_joseki(user, keys):
+    keys = [k for k in keys if k and '\n' not in k]
+    if keys:
+        _dir(user).mkdir(parents=True, exist_ok=True)
+        with open(_dir(user) / 'joseki-seen.txt', 'a') as f:
+            f.write(''.join(k + '\n' for k in keys))
+
+
 def next_variation(s):
     """Number of the session's next variation name (Var1, Var2…), never reusing one."""
     names = [v['name'] for v in (s or {}).get('variations', [])]

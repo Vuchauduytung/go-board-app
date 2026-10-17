@@ -49,6 +49,7 @@ import accounts
 import bot
 import coach
 import exercises
+import josekinotes
 import kgcache
 import review
 import score
@@ -794,13 +795,23 @@ def import_sgf(file: UploadFile = File(...), user: str = Depends(current_user)):
     return sessions.summary(s)
 
 
+class StepIn(BaseModel):
+    level: Optional[str] = None   # the player's level ("5k", "1d"…), for the moves taught; None: guessed from the game
+
+
+def _level(body):
+    return body.level if body and body.level in review.RANKS else None
+
+
 @app.post('/api/sessions/{sid}/review/step')
-def review_step(sid: str, user: str = Depends(current_user)):
+def review_step(sid: str, body: Optional[StepIn] = None, user: str = Depends(current_user)):
     """Some more of the game review (~20 s of KataGo work); call again until status is "done"."""
     s = _own_session(user, sid)
     if not s.get('game'):
         raise HTTPException(400, 'Ván này không có kỷ lục SGF để review')
     r = s.get('review') or review.new_review(s['game'])
+    if r.get('phase', 'scan') == 'scan' and _level(body):   # used from the deep phase on
+        r['level'] = _level(body)
     if r['status'] != 'done':
         try:
             r = review.step(s['game'], r, _katago_for(user, sid), peek=lambda p: kgcache.lookup(p, (user, sid)))
@@ -814,7 +825,7 @@ def review_step(sid: str, user: str = Depends(current_user)):
 
 
 @app.post('/api/sessions/{sid}/joseki/step')
-def joseki_review_step(sid: str, user: str = Depends(current_user)):
+def joseki_review_step(sid: str, body: Optional[StepIn] = None, user: str = Depends(current_user)):
     """Some more of the joseki review (review.joseki_step: ~20 s of searches, always on the VM's CPU KataGo, apart
     from the game's review); call again until status is "done"."""
     s = _own_session(user, sid)
@@ -823,8 +834,15 @@ def joseki_review_step(sid: str, user: str = Depends(current_user)):
     jr = s.get('joseki_review') or review.new_joseki_review(s['game'])
     if jr['status'] != 'done':
         cpu = _katago_for(user, sid)
+        # the player's level: chosen, else the game review's guess, else the AI's level of a game against it
+        lv = _level(body) or (s.get('play') or {}).get('level')
+        levels = {w: lv for w in 'BW'} if _level(body) else (s.get('review') or {}).get('levels') or \
+            ({w: lv for w in 'BW'} if lv in review.RANKS else {})
         try:
-            jr = review.joseki_step(s['game'], jr, lambda p: cpu({**p, 'engine': 'cpu'}))
+            jr = review.joseki_step(s['game'], jr, lambda p: cpu({**p, 'engine': 'cpu'}), levels=levels,
+                                    seen=sessions.seen_joseki(user))
+            if jr['status'] == 'done':
+                sessions.add_seen_joseki(user, [o.get('pick') for o in jr.get('results') or []])
         except QuotaExceeded as ex:
             raise HTTPException(429, str(ex))
         except KataGoError as ex:
@@ -832,6 +850,27 @@ def joseki_review_step(sid: str, user: str = Depends(current_user)):
         finally:
             sessions.set_joseki_review(user, sid, jr)
     return review.joseki_progress(jr)
+
+
+class ExplainIn(BaseModel):
+    index: int   # the corner: its place in the joseki review's results
+
+
+@app.post('/api/sessions/{sid}/joseki/explain')
+def joseki_explain(sid: str, body: ExplainIn, user: str = Depends(current_user)):
+    """What a corner's joseki is for (josekinotes.py): purpose, what each side gets, each side's weaknesses."""
+    s = _own_session(user, sid)
+    results = (s.get('joseki_review') or {}).get('results') or []
+    if not 0 <= body.index < len(results) or not results[body.index].get('explain', {}).get('moves'):
+        raise HTTPException(404, 'Không có định thức để giải thích ở góc này')
+    try:
+        note = josekinotes.explain(user, results[body.index]['explain'])
+    except QuotaExceeded as ex:
+        raise HTTPException(429, str(ex))
+    except Exception as ex:
+        log.exception('joseki explanation failed')
+        raise HTTPException(502, f'Chưa giải thích được: {type(ex).__name__}')
+    return {'note': note, 'fields': josekinotes.FIELDS}
 
 
 class LineIn(BaseModel):

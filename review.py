@@ -24,6 +24,17 @@ GOOD = 0.5         # other moves within this many points of the best one, kept a
 # other way (exercises.FOCUS); FIGHTS more of each side's biggest fights are searched too, for them.
 FOCUS = {'khai-cuoc': 2.0, 'dai-cuc': 1.0, 'noi-cat': 0.7, 'tesuji': 0.5, 'song-chet': 0.5}
 FIGHTS = 5
+# Taught at the player's level, with KataGo's human SL net on the VM's CPU (katago_server.py): of the moves about as
+# good as the best one (TEACH points), the one players of the level would most likely play, and one close to the move
+# played (NEAR lines: the same purpose) when there is one; KataGo's own best move stays next to it. A mistake that
+# players STRONGER ranks above play at most half as often is one of the level's typical mistakes: weighed TYPICAL.
+# The level is the one the player chose, else each side's guessed from the points it lost per move (bot.LEVELS).
+TEACH = 1.0
+NEAR = 3
+STRONGER = 4
+TYPICAL = 1.5
+RANKS = [f'{k}k' for k in range(20, 0, -1)] + [f'{d}d' for d in range(1, 10)]
+HUMAN_VISITS = 10   # the human policy needs no search
 RULES = {'japanese': 'japanese', 'chinese': 'chinese', 'korean': 'korean', 'aga': 'aga', 'nz': 'new-zealand',
          'new zealand': 'new-zealand', 'tromp-taylor': 'tromp-taylor'}
 
@@ -171,6 +182,55 @@ def extend_from(katago, base, first, line, count=LINE):
     return out[:count]
 
 
+def guess_level(game, review, who):
+    """A side's level from the points it lost per move (each capped at 10), next to the AI levels' (bot.LEVELS):
+    past 5k, a kyu more for every 0.3 point more, down to 15k."""
+    import bot
+    p = review['positions']
+    losses = [min(10.0, _loss(review, i)) for i, (w, _) in enumerate(game['moves'])
+              if w == who and str(i) in p and str(i + 1) in p]
+    if not losses:
+        return '5k'
+    avg = sum(losses) / len(losses)
+    table = sorted((t, lv) for lv, (t, _) in bot.LEVELS.items())
+    if avg > table[-1][0]:
+        return f'{min(15, int(table[-1][1][:-1]) + round((avg - table[-1][0]) / 0.3))}k'
+    return min(table, key=lambda x: abs(x[0] - avg))[1]
+
+
+def _human(katago, game, i, level):
+    """{move: probability} players of `level` play in the position before move i, or None (no human net)."""
+    try:
+        res = katago({**position(game, i), 'max_visits': HUMAN_VISITS, 'top': 1, 'ownership': False, 'engine': 'cpu',
+                      'human_profile': f'rank_{level}'})
+    except Exception as ex:   # the review goes on without it
+        import logging
+        logging.getLogger('review').warning('human policy failed: %s', ex)
+        return None
+    return dict(res['human_policy']) if res.get('human_policy') else None
+
+
+def _teach(katago, game, i, res, level):
+    """The move to teach at `level` and whether the move played is one of the level's typical mistakes."""
+    who, played = game['moves'][i]
+    n = game['board_size']
+    hp = _human(katago, game, i, level)
+    if not hp:
+        return None
+    best, top = res['moves'][0], res['moves'][0]['visits']
+    cands = [m for m in res['moves'] if m['move'] != 'pass' and m['score_lead'] >= best['score_lead'] - TEACH
+             and m['visits'] >= max(10, top * 0.1)] or [best]
+    pr = coach.parse_point(played, n)
+    dist = lambda m: (lambda rc: max(abs(rc[0] - pr[0]), abs(rc[1] - pr[1])) if rc and pr else 99)(coach.parse_point(m['move'], n))
+    near = [m for m in cands if dist(m) <= NEAR]
+    teach = max(near or cands, key=lambda m: (hp.get(m['move'], 0), m['score_lead']))
+    stronger = RANKS[min(len(RANKS) - 1, RANKS.index(level) + STRONGER)]
+    hs = _human(katago, game, i, stronger) or {}
+    mine = hp.get(played, 0)
+    return {'teach': teach, 'intent': bool(near) and teach in near, 'level': level,
+            'typical': mine >= 0.02 and hs.get(played, 0) <= mine / 2, 'played_prior': round(mine, 3)}
+
+
 def _board(game, i):
     p = position(game, i)
     return coach.final_position(p['matrix'], p['to_play'], p['moves'])[0]
@@ -187,9 +247,17 @@ def _deepen(katago, game, review, i):
     loss = _loss(review, i, best['score_lead'], mine and mine['score_lead'])
     good = [m['move'] for m in res['moves'][1:] if m['score_lead'] >= best['score_lead'] - GOOD
             and m['visits'] >= max(10, best['visits'] * 0.1)][:3]
-    return {'loss': loss, 'best': best['move'], 'best_lead': best['score_lead'], 'good': good,
-            'line': _line(katago, game, i, best['pv']),
-            'kind': exercises.classify(_board(game, i), game['moves'][i][0], best['move'], i + 1)}
+    out = {'loss': loss, 'best': best['move'], 'best_lead': best['score_lead'], 'good': good,
+           'line': _line(katago, game, i, best['pv']),
+           'kind': exercises.classify(_board(game, i), game['moves'][i][0], best['move'], i + 1)}
+    level = review.get('levels', {}).get(game['moves'][i][0])
+    t = level and _teach(katago, game, i, res, level)
+    if t:
+        m = t['teach']
+        out.update(teach=m['move'], teach_loss=round(max(0.0, best['score_lead'] - m['score_lead']), 1),
+                   teach_line=out['line'] if m is best else _line(katago, game, i, m['pv']), intent=t['intent'],
+                   typical=t['typical'], level=level)
+    return out
 
 
 def _candidates(game, review):
@@ -219,10 +287,14 @@ def _finish(game, review):
             i = int(key)
             if game['moves'][i][0] != who or d['loss'] <= 0.5:
                 continue
+            # shown: the move taught at the player's level and its line; KataGo's best next to it when different
             found.append({'number': i + 1, 'color': who, 'move': game['moves'][i][1], 'loss': round(d['loss'], 1),
                           'winrate_before': p[str(i)][0], 'winrate_after': round(1 - p[str(i + 1)][0], 4),
-                          'best': d['best'], 'line': d['line'], 'kind': d.get('kind', 'dai-cuc')})
-        review['mistakes'][who] = sorted(found, key=lambda m: -m['loss'] * FOCUS[m['kind']])[:MISTAKES]
+                          'best': d.get('teach') or d['best'], 'line': d.get('teach_line') or d['line'],
+                          'kata_best': d['best'], 'teach_loss': d.get('teach_loss'), 'intent': d.get('intent'),
+                          'typical': d.get('typical'), 'level': d.get('level'), 'kind': d.get('kind', 'dai-cuc')})
+        rank = lambda m: m['loss'] * FOCUS[m['kind']] * (TYPICAL if m['typical'] else 1)
+        review['mistakes'][who] = sorted(found, key=lambda m: -rank(m))[:MISTAKES]
     review.update(status='done', phase='done', finished_at=time.time())
 
 
@@ -231,13 +303,20 @@ def _finish(game, review):
 # top-right corner (and across the corner's diagonal), until the game leaves the tree or a tenuki breaks the corner's
 # sequence before the joseki ended. From where it left, the corner's moves are searched (SCAN_VISITS each) for their
 # loss; the review lists every corner that left the joseki: the move that left it, the first costly move after it
-# (OPENING_LOSS or more) if any, and the joseki to play from there (the tree's best move, then its main line). ----
+# (OPENING_LOSS or more) if any, and the joseki to play from there (the tree's best move, then its main line).
+# The player's joseki is kept when it left the tree for a move losing less than KEEP_LOSS: then only a costly move
+# after it is corrected, where it was played. Otherwise, of the tree's branches about as good as its best (EQUAL), the
+# joseki proposed is the one played out to its end with the fewest tenukis, then one this player was not shown yet
+# (`seen`, from their other games: knowing more joseki), then the one players of their level would most likely play
+# (the human SL net). ----
 OPENING_MOVES = 40
 OPENING_LOSS = 1.0
 CORNER_MOVES = 8      # moves of a corner searched from where it left the joseki
 CORNERS = (('trên-phải', False, False), ('trên-trái', False, True), ('dưới-phải', True, False), ('dưới-trái', True, True))
 JOSEKI_LINE = 30     # the joseki to play is followed through the deepened tree up to this many moves…
-JOSEKI_TENUKI = 2    # …with at most this many tenukis in it (the corner's local moves are always preferred)
+JOSEKI_TENUKI = 1    # …with at most this many tenukis in it (the corner's local moves are always preferred)
+KEEP_LOSS = 1.5
+EQUAL = 0.5
 
 
 def _turn(rc, flip_r, flip_c, n=19):
@@ -289,7 +368,7 @@ def corner_walks(game, nodes):
             left = (i, w, m, t)
             break
         if left:
-            out.append({'name': name, 'fr': fr, 'fc': fc, 'diag': diag, 'seq': seq, 'left': left,
+            out.append({'name': name, 'fr': fr, 'fc': fc, 'diag': diag, 'seq': seq, 'left': left, 'first': corner[0][1],
                         'after': [i for i, _, _ in corner if i >= left[0]][:CORNER_MOVES]})
     return out
 
@@ -303,10 +382,46 @@ def joseki_needs(game, nodes):
     return sorted(i for i in need if i <= len(game['moves']))
 
 
-def joseki_results(game, positions, nodes):
+def _follow(nodes, key):
+    """The tree's main line from `key` -> (moves, None for a tenuki, number of tenukis, whether the corner ends)."""
+    line = []
+    while len(line) < JOSEKI_LINE:
+        nxt = (nodes.get(key) or {}).get('next', [])
+        here = [k for k in nxt if not k.get('tenuki')]
+        if not here and (not nxt or line.count(None) >= JOSEKI_TENUKI):
+            break
+        k = (here or nxt)[0]
+        line.append(None if k.get('tenuki') else k['move'])
+        key += ' ' + k['move']
+    ends = bool((nodes.get(key) or {}).get('settled'))   # a branch not grown yet is no end
+    while line and line[-1] is None:   # a line never ends on a tenuki
+        line.pop()
+    return line, line.count(None), ends
+
+
+def _choose(nodes, key, prior, seen):
+    """The joseki to propose from `key` -> (line, ends, the tree key of its first move), or None."""
+    kids = [k for k in (nodes.get(key) or {}).get('next', []) if not k.get('tenuki')]
+    if not kids:
+        return None
+    low = min(k.get('delta', 0) for k in kids)
+    opts = []
+    for k in kids:
+        if k.get('delta', 0) <= low + EQUAL:
+            nk = f"{key} {k['move']}"
+            line, tenukis, ends = _follow(nodes, nk)
+            opts.append(((ends, -tenukis, nk not in seen, prior(k['move']), -k.get('delta', 0)), [k['move']] + line, ends, nk))
+    _, line, ends, nk = max(opts, key=lambda o: o[0])
+    return line, ends, nk
+
+
+def joseki_results(game, positions, nodes, human=None, seen=frozenset()):
     """The joseki review from the corners' searched positions -> [{corner, left, left_color, left_move, left_loss,
-    number, color, move, loss (the first costly move from there, or None), joseki: [[colour, move]…], ends, tenuki,
-    played_rating, known}], in move order."""
+    number, color, move, loss (the first costly move from there, or None), kept (the player's joseki is kept), fix
+    (the move to play instead of that costly one, when kept), joseki: [[colour, move]…] (proposed), ends, tenuki,
+    played_rating, known, pick (the tree key of the joseki proposed), explain ({first, before, moves}: the corner in
+    the tree's top-right orientation, for the explanation)}], in move order. human: {str(i): {move: p}} of the
+    player's level before each corner's move that left the tree; seen: tree keys already proposed to this player."""
     import joseki
     review = {'positions': positions}
     loss = lambda i: _loss(review, i) if str(i) in positions and str(i + 1) in positions else None
@@ -318,31 +433,34 @@ def joseki_results(game, positions, nodes):
         if kids and kids[0]['move'] == t:
             continue
         back = lambda mv: coach.gtp(*_turn(joseki.rc(joseki.mirror(mv) if c['diag'] else mv), c['fr'], c['fc']), 19)
-        line, key, tenukis = [], ' '.join(c['seq']), 0
-        while len(line) < JOSEKI_LINE:
-            nxt = (nodes.get(key) or {}).get('next', [])
-            here = [k for k in nxt if not k.get('tenuki')]
-            if not here:
-                if not nxt or tenukis >= JOSEKI_TENUKI:
-                    break
-                tenukis += 1
-            k = (here or nxt)[0]
-            line.append(None if k.get('tenuki') else k['move'])
-            key += ' ' + k['move']
-        while line and line[-1] is None:   # a line never ends on a tenuki
-            line.pop()
-        colors = [w if k % 2 == 0 else coach.OTHER[w] for k in range(len(line))]
+        turn = lambda mv: (lambda x: joseki.mirror(x) if c['diag'] else x)(joseki.gtp(*_turn(coach.parse_point(mv, 19), c['fr'], c['fc'])))
+        seq_colors = [c['first'] if k % 2 == 0 else coach.OTHER[c['first']] for k in range(len(c['seq']))]
         bad = next((j for j in c['after'] if (loss(j) or 0) >= OPENING_LOSS), None)
         mine = next((k for k in kids if k['move'] == t), None)
-        out.append({'corner': c['name'], 'left': i + 1, 'left_color': w, 'left_move': m,
-                    'left_loss': None if loss(i) is None else round(loss(i), 1),
-                    'number': None if bad is None else bad + 1, 'color': None if bad is None else game['moves'][bad][0],
-                    'move': None if bad is None else game['moves'][bad][1],
-                    'loss': None if bad is None else round(loss(bad), 1),
-                    'joseki': [[col, back(x) if x else 'tenuki'] for col, x in zip(colors, line)],
-                    'ends': bool(nodes.get(key, {}).get('settled')) or not (nodes.get(key) or {}).get('next'),
-                    'tenuki': bool(node.get('settled')) and not line,
-                    'played_rating': mine and mine['rating'], 'known': len(c['seq'])})
+        kept = loss(i) is not None and loss(i) < KEEP_LOSS
+        item = {'corner': c['name'], 'left': i + 1, 'left_color': w, 'left_move': m,
+                'left_loss': None if loss(i) is None else round(loss(i), 1),
+                'number': None if bad is None else bad + 1, 'color': None if bad is None else game['moves'][bad][0],
+                'move': None if bad is None else game['moves'][bad][1],
+                'loss': None if bad is None else round(loss(bad), 1),
+                'kept': kept, 'fix': None, 'joseki': [], 'ends': False, 'tenuki': False, 'pick': None,
+                'played_rating': mine and mine['rating'], 'known': len(c['seq'])}
+        before = [[col, mv] for col, mv in zip(seq_colors, c['seq'])]
+        if kept:   # the player's own joseki: its moves, and only the costly one corrected
+            if bad is not None:
+                item['fix'] = positions[str(bad)][2]
+            item['explain'] = {'first': c['first'], 'before': before,
+                               'moves': [[game['moves'][j][0], turn(game['moves'][j][1])] for j in c['after']]}
+        else:
+            prior = (lambda mv: (human or {}).get(str(i), {}).get(back(mv), 0))
+            got = None if node.get('settled') else _choose(nodes, ' '.join(c['seq']), prior, seen)
+            line, ends, pick = got or ([], True, None)
+            colors = [w if k % 2 == 0 else coach.OTHER[w] for k in range(len(line))]
+            item.update(joseki=[[col, back(x) if x else 'tenuki'] for col, x in zip(colors, line)], ends=ends,
+                        tenuki=not line, pick=pick,
+                        explain={'first': c['first'], 'before': before,
+                                 'moves': [[col, x or 'tenuki'] for col, x in zip(colors, line)]})
+        out.append(item)
     return sorted(out, key=lambda o: o['left'])
 
 
@@ -351,8 +469,9 @@ def new_joseki_review(game, nodes=None):
     return {'status': 'running', 'need': joseki_needs(game, nodes), 'positions': {}, 'results': None}
 
 
-def joseki_step(game, jr, katago, seconds=STEP_SECONDS, nodes=None):
-    """Up to `seconds` of searches for the joseki review (katago: the CPU's), then its results."""
+def joseki_step(game, jr, katago, seconds=STEP_SECONDS, nodes=None, levels=None, seen=frozenset()):
+    """Up to `seconds` of searches for the joseki review (katago: the CPU's), then its results. levels: {colour:
+    level} of the player(s), for the human SL net; seen: the tree keys of joseki already proposed to them."""
     end = time.time() + seconds
     for i in jr['need']:
         if time.time() >= end:
@@ -361,7 +480,14 @@ def joseki_step(game, jr, katago, seconds=STEP_SECONDS, nodes=None):
             jr['positions'][str(i)] = _scan(katago, game, i)
     if all(str(i) in jr['positions'] for i in jr['need']):
         nodes = nodes if nodes is not None else _tree_nodes()
-        jr.update(status='done', results=joseki_results(game, jr['positions'], nodes))
+        human = jr.setdefault('human', {})
+        for c in corner_walks(game, nodes):
+            i, w = c['left'][0], c['left'][1]
+            if (levels or {}).get(w) and str(i) not in human:
+                if time.time() >= end:
+                    return jr
+                human[str(i)] = _human(katago, game, i, levels[w]) or {}
+        jr.update(status='done', results=joseki_results(game, jr['positions'], nodes, human, seen))
     return jr
 
 
@@ -380,6 +506,9 @@ def step(game, review, katago, seconds=STEP_SECONDS, peek=None):
             if not todo:
                 review['phase'] = 'deep'
                 review['candidates'] = _candidates(game, review)
+                chosen = review.get('level')   # the player's, for both sides (it may be either), else guessed
+                review['levels'] = {w: chosen or guess_level(game, review, w) for w in ('B', 'W')}
+                review['level_guessed'] = not chosen
                 break
             for i, res in zip(todo, pool.map(lambda i: _scan(katago, game, i, peek), todo)):
                 review['positions'][str(i)] = res
@@ -399,5 +528,5 @@ def progress(review):
     if not review:
         return None
     deep_total = sum(len(v) for v in review.get('candidates', {}).values())
-    return {k: review.get(k) for k in ('status', 'phase', 'total', 'done', 'mistakes')} | \
+    return {k: review.get(k) for k in ('status', 'phase', 'total', 'done', 'mistakes', 'levels', 'level_guessed')} | \
         {'deep_done': len(review.get('deep', {})), 'deep_total': deep_total}

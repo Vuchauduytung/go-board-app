@@ -189,7 +189,8 @@ JOSEKI_NODES = {   # top-right corner: 4-4, 3-3 invasion, block, hane … ends
 
 def test_joseki_review_on_the_cpu_lists_where_corners_left_the_joseki():
     # bottom-left: Black 4-4 (D4), White 3-3 (C3), Black blocks (C4), White leaves the joseki with F3 (not D3),
-    # then plays D3 too late; moves elsewhere in between do not break the corner's sequence
+    # then plays D3 too late; moves elsewhere in between do not break the corner's sequence. F3 loses nothing: the
+    # player's joseki is kept, only the costly D3 is corrected
     moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'F3'], ['B', 'K4'], ['W', 'D3'],
              ['B', 'J3']]   # K4: Black twice in the bottom-right (a tenuki there), nothing to compare
     game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
@@ -211,8 +212,21 @@ def test_joseki_review_on_the_cpu_lists_where_corners_left_the_joseki():
     (o,) = jr['results']
     assert o['corner'] == 'dưới-trái' and o['left'] == 6 and o['left_move'] == 'F3' and o['known'] == 3
     assert o['number'] == 8 and o['move'] == 'D3' and o['loss'] >= 1
-    assert o['joseki'][0] == ['W', 'D3'] and [c for c, _ in o['joseki']] == ['W', 'B', 'W']
+    assert o['kept'] and o['joseki'] == [] and o['fix'] == 'A1' and o['pick'] is None
+    assert o['explain']['first'] == 'B' and len(o['explain']['before']) == 3 and o['explain']['moves'][0] == ['W', 'O17']
     assert review.joseki_progress(jr)['done'] == len(need)
+    # F3 costly (2 points): a joseki is proposed instead, played out to its end
+    def cpu2(p):
+        i = len(p['moves'])
+        lead = 2.0 if i == 5 else 0.0
+        return {'winrate': 0.5, 'score_lead': lead, 'moves': [{'move': 'A1', 'score_lead': lead, 'visits': 50}]}
+    jr = review.new_joseki_review(game, JOSEKI_NODES)
+    while jr['status'] != 'done':
+        jr = review.joseki_step(game, jr, cpu2, nodes=JOSEKI_NODES)
+    (o,) = jr['results']
+    assert not o['kept'] and o['left_loss'] == 2.0
+    assert o['joseki'][0] == ['W', 'D3'] and [c for c, _ in o['joseki']] == ['W', 'B', 'W'] and o['ends']
+    assert o['pick'] and o['pick'].startswith('Q16 R17 ')
     # following the joseki: nothing to report
     good = review.game_from_moves([[0] * 19 for _ in range(19)],
                                   [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'D3']], 6.5, 'a', 'b')
@@ -231,7 +245,7 @@ def test_joseki_line_goes_on_through_the_deepened_tree_with_few_tenukis():
     deep[end + ' D4 O17 N17 D16'] = {'settled': True, 'next': []}
     moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'C3'], ['B', 'C4'], ['W', 'F3']]
     game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
-    (o,) = review.joseki_results(game, {}, deep)
+    (o,) = review.joseki_results(game, {}, deep)   # not searched: the move's loss unknown, a joseki proposed
     line = [m for _, m in o['joseki']]
     assert line[:3] != [] and line[3] == 'tenuki' and len(line) == 6 and o['ends']   # no trailing tenuki
     assert [c for c, _ in o['joseki']] == ['W', 'B', 'W', 'B', 'W', 'B']
@@ -241,3 +255,59 @@ def test_joseki_line_goes_on_through_the_deepened_tree_with_few_tenukis():
         assert len(o['joseki']) == 3
     finally:
         review.JOSEKI_TENUKI = review_tenukis
+
+
+def test_joseki_proposed_played_out_new_to_the_player_and_at_their_level():
+    # after 4-4 and the 3-3 invasion, three branches about as good: one breaks off with a tenuki, two end the corner
+    nodes = {
+        'Q16': {'settled': False, 'next': [{'move': 'R17', 'rating': 'best', 'delta': 0}]},
+        'Q16 R17': {'settled': False, 'next': [{'move': 'R16', 'delta': 0.0}, {'move': 'Q17', 'delta': 0.2},
+                                               {'move': 'P17', 'delta': 0.1}, {'move': 'O17', 'delta': 2.0}]},
+        'Q16 R17 R16': {'settled': False, 'next': [{'move': 'D4', 'tenuki': True, 'delta': 0}]},
+        'Q16 R17 R16 D4': {'settled': False, 'next': [{'move': 'Q17', 'delta': 0}]},
+        'Q16 R17 R16 D4 Q17': {'settled': True, 'next': []},
+        'Q16 R17 Q17': {'settled': False, 'next': [{'move': 'R16', 'delta': 0}]},
+        'Q16 R17 Q17 R16': {'settled': True, 'next': []},
+        'Q16 R17 P17': {'settled': False, 'next': [{'move': 'R16', 'delta': 0}]},
+        'Q16 R17 P17 R16': {'settled': True, 'next': []},
+        'Q16 R17 O17': {'settled': True, 'next': []},
+    }
+    pick = lambda prior=lambda m: 0, seen=frozenset(): review._choose(nodes, 'Q16 R17', prior, seen)
+    line, ends, key = pick()
+    assert ends and key == 'Q16 R17 P17' and line == ['P17', 'R16']   # no tenuki; the better of the two
+    assert pick(seen={'Q16 R17 P17'})[2] == 'Q16 R17 Q17'              # one the player has not seen yet
+    assert pick(prior=lambda m: {'Q17': 0.6, 'P17': 0.1}.get(m, 0))[2] == 'Q16 R17 Q17'   # the level's choice
+    assert pick(prior=lambda m: {'O17': 0.9}.get(m, 0))[2] != 'Q16 R17 O17'   # 2 points worse: never
+
+
+def test_moves_taught_at_the_players_level():
+    moves = [['B', 'D4'], ['W', 'Q16'], ['B', 'Q4'], ['W', 'D16'], ['B', 'K10']]
+    game = review.game_from_moves([[0] * 19 for _ in range(19)], moves, 6.5, 'a', 'b')
+    asked = []
+
+    def kg(p):
+        asked.append(p.get('human_profile'))
+        policy = {'rank_3k': [['C6', 0.5], ['K10', 0.3], ['R10', 0.2]],
+                  'rank_2d': [['C6', 0.6], ['R10', 0.3], ['K10', 0.05]]}[p['human_profile']]
+        return {'winrate': 0.5, 'score_lead': 0, 'human_policy': policy, 'moves': []}
+    res = {'moves': [{'move': 'R10', 'score_lead': 3.0, 'visits': 400, 'pv': ['R10']},
+                     {'move': 'C6', 'score_lead': 2.4, 'visits': 200, 'pv': ['C6']},
+                     {'move': 'K9', 'score_lead': 2.2, 'visits': 100, 'pv': ['K9']},
+                     {'move': 'J3', 'score_lead': 1.0, 'visits': 100, 'pv': ['J3']}]}
+    t = review._teach(kg, game, 4, res, '3k')
+    assert asked == ['rank_3k', 'rank_2d']                     # the level, and 4 ranks stronger
+    assert t['teach']['move'] == 'K9' and t['intent']          # near K10, the move played: its purpose
+    assert t['typical']                                         # 2d play K10 at most half as often as 3k
+    far = review._teach(kg, game, 4, {'moves': [m for m in res['moves'] if m['move'] != 'K9']}, '3k')
+    assert far['teach']['move'] == 'C6' and not far['intent']  # nothing near: the one 3k play most
+    assert review._teach(lambda p: {'moves': [], 'human_policy': None}, game, 4, res, '3k') is None
+
+
+def test_level_guessed_from_the_points_lost():
+    game = review.game_from_moves([[0] * 9 for _ in range(9)], [['B', 'E5'], ['W', 'C3'], ['B', 'G7'], ['W', 'C7']],
+                                  7.5, 'a', 'b')
+    pos = lambda leads: {'positions': {str(i): [0.5, l, 'A1', l, None] for i, l in enumerate(leads)}}
+    assert review.guess_level(game, pos([0.5, -0.0, 0.5, -0.0, 0]), 'B') == '5d'   # 0.5 a move
+    assert review.guess_level(game, pos([2.5, -0.0, 2.5, -0.0, 0]), 'B') == '5k'
+    assert review.guess_level(game, pos([4.0, -0.0, 4.0, -0.0, 0]), 'B') == '10k'  # 1.5 more: 5 kyu weaker
+    assert review.guess_level(game, {'positions': {}}, 'W') == '5k'
