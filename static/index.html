@@ -227,6 +227,8 @@
   .varprev svg { width: 100%; max-width: 360px; display: block; margin: 6px auto; border-radius: 6px; }
   .varprev .pv { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
   .varprev .varerr { font-size: 13px; color: var(--err); margin: 4px 0 6px; }
+  .msg a.pt { color: inherit; font-weight: 600; text-decoration: underline dotted; text-underline-offset: 2px; }
+  .msg a.pt.on { color: var(--err); }
   .msg .say { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
               cursor: pointer; padding: 0; }
   ul.reviews .reply { margin: 8px 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--accent); background: #f6f1e8;
@@ -2372,9 +2374,12 @@ async function apiJson(path, { method = 'GET', body } = {}) {
   return j;
 }
 
-// Small Markdown subset: paragraphs, bullet/numbered lists, **bold**, *italic*, citations [n], variations [Var3]
-function md(text, nSources) {
+// Small Markdown subset: paragraphs, bullet/numbered lists, **bold**, *italic*, citations [n], variations [Var3];
+// size: points like Q16 on a board of that size become links to them on the message's small board
+function md(text, nSources, size = 0) {
   const inline = t => esc(t)
+    .replace(/\b([A-HJ-T])(1[0-9]|[1-9])\b/g, (m, col, row) =>
+      size && COLS.indexOf(col) < size && +row <= size ? `<a href="#" class="pt" data-pt="${m}">${m}</a>` : m)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<i>$2</i>')
     .replace(/\[(Var\d+)\]/g, '<a href="#" class="var" data-var="$1">$1</a>')
@@ -2429,7 +2434,8 @@ $('nextPage').onclick = () => viewing && openPage(viewing.src, viewing.page + 1)
 
 // Answer text + book sources into the message `el`
 function renderAnswer(el, j, board) {
-  el.innerHTML = md(j.answer, j.sources.length);
+  el.innerHTML = md(j.answer, j.sources.length, board && matrix ? matrix.length : 0);
+  if (board && matrix) el._board = clone(matrix);   // the position the answer is about, for its points' small board
   el._answer = j.answer;
   // board answers mostly rest on KataGo: list only the books the answer actually cites
   const cited = new Set([...el.querySelectorAll('[data-cite]')].map(a => +a.dataset.cite));
@@ -2676,11 +2682,14 @@ function variationPreview(v) {
     return { board, nums, bad };
   } finally { koBoard = saved; }
 }
-function previewSvg(board, nums) {
-  const n = board.length;
-  let h = `<svg viewBox="-1 -1 ${n + 1} ${n + 1}" aria-hidden="true"><rect x="-1" y="-1" width="${n + 1}" height="${n + 1}" fill="var(--wood)"/>`;
+// A small board with its coordinates; nums: numbered moves of a line; mark: [r, c] a point the answer named
+function previewSvg(board, nums, mark) {
+  const n = board.length, lab = 'font-size=".5" fill="#6b5a3e" text-anchor="middle"';
+  let h = `<svg viewBox="-1.6 -1.6 ${n + 2.2} ${n + 2.2}" aria-hidden="true"><rect x="-1.6" y="-1.6" width="${n + 2.2}" height="${n + 2.2}" fill="var(--wood)"/>`;
   for (let i = 0; i < n; i++) {
     h += `<line x1="0" y1="${i}" x2="${n - 1}" y2="${i}" stroke="var(--wood-line)" stroke-width=".04"/><line x1="${i}" y1="0" x2="${i}" y2="${n - 1}" stroke="var(--wood-line)" stroke-width=".04"/>`;
+    h += `<text x="${i}" y="-.95" ${lab}>${COLS[i]}</text><text x="${i}" y="${n - 1 + 1.2}" ${lab}>${COLS[i]}</text>`;
+    h += `<text x="-1.05" y="${i + .15}" ${lab}>${n - i}</text><text x="${n - 1 + 1.05}" y="${i + .15}" ${lab}>${n - i}</text>`;
   }
   board.forEach((row, r) => row.forEach((v, c) => {
     if (v) h += `<circle cx="${c}" cy="${r}" r=".46" fill="${v === 1 ? '#141414' : '#fafafa'}" stroke="#333" stroke-width=".03"/>`;
@@ -2692,6 +2701,7 @@ function previewSvg(board, nums) {
     if (x.n === 1) h += `<circle cx="${x.c}" cy="${x.r}" r=".5" fill="none" stroke="var(--ok)" stroke-width=".09"/>`;
     h += `<text x="${x.c}" y="${x.r + .18}" font-size=".5" font-weight="700" text-anchor="middle" fill="${x.color === 1 ? '#fff' : '#141414'}">${x.n}</text>`;
   }
+  if (mark) h += `<circle cx="${mark[1]}" cy="${mark[0]}" r=".62" fill="rgba(179,38,30,.18)" stroke="var(--err)" stroke-width=".12"/>`;
   return h + '</svg>';
 }
 $('coachLog').addEventListener('click', e => {
@@ -2702,6 +2712,8 @@ $('coachLog').addEventListener('click', e => {
     if (body.board) askCoach(q); else chatRequest(q, { log: $('coachLog'), btn: $('coachBtn'), body });
     return;
   }
+  const pt = e.target.closest('a[data-pt]');
+  if (pt) { e.preventDefault(); showPoint(pt); return; }
   const show = e.target.closest('[data-show]');
   if (show) {   // why it failed goes right under the button: the status line is out of sight from the chat
     const err = showVariation(show.dataset.show), note = show.parentElement.querySelector('.showerr');
@@ -2722,11 +2734,36 @@ $('coachLog').addEventListener('click', e => {
   const box = document.createElement('div');
   box.className = 'varprev';
   box.dataset.var = name;
+  box._prev = { board, nums };
   box.innerHTML = `<div><b>${esc(name)}</b>${v.title ? ' · ' + esc(v.title) : ''}</div>${previewSvg(board, nums)}
     <div class="pv">${varMoves(v)}</div>${bad.length ? `<div class="varerr">⚠ Không đặt được: ${esc(bad.join(', '))}</div>` : ''}
     <button type="button" class="src" data-show="${esc(name)}">▶ Đặt lên bàn cờ</button>`;
   (a.closest('p, ul, ol') || msg.lastElementChild).after(box);
 });
+// A point named in an answer: marked on the message's open variation board, else on a small board of the position the
+// answer was about (the board now for answers kept from before); the same point again closes it
+function showPoint(a) {
+  const msg = a.closest('.msg'), name = a.dataset.pt;
+  let box = msg.querySelector('.varprev:not([data-pt])') || msg.querySelector('.varprev[data-pt]');
+  const board = box?._prev?.board || msg._board || matrix;
+  const n = board.length, rc = [n - +name.slice(1), COLS.indexOf(name[0])];
+  if (!(rc[0] >= 0 && rc[0] < n && rc[1] >= 0 && rc[1] < n)) return;
+  if (box && box.dataset.pt !== undefined && box._mark === name) { box.remove(); msg.querySelectorAll('a.pt.on').forEach(x => x.classList.remove('on')); return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'varprev';
+    box.dataset.pt = '';
+    box._prev = { board, nums: [] };
+    (a.closest('p, ul, ol') || msg.lastElementChild).after(box);
+  }
+  box._mark = name;
+  const v = box._prev, head = box.dataset.pt !== undefined ? `<div><b>${esc(name)}</b> trên thế cờ của câu trả lời này</div>` : null;
+  const svg = previewSvg(v.board, v.nums, rc);
+  const old = box.querySelector('svg');
+  if (old) old.outerHTML = svg; else box.innerHTML = head + svg;
+  if (head) box.firstElementChild.outerHTML = head;
+  msg.querySelectorAll('a.pt').forEach(x => x.classList.toggle('on', x.dataset.pt === name));
+}
 $('varBack').addEventListener('click', () => {
   if (!activeVar) return;
   const st = activeVar.before;
