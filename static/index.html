@@ -1430,6 +1430,7 @@ function showReview(r) {
     <li data-i="${i}">
       <div>${m.kind ? `<span class="kind">${EX_ICON[m.kind] || ''} ${KIND_NAME[m.kind] || ''}</span> ` : ''}<b>Nước ${m.number}</b>: ${m.color === 'B' ? '⚫' : '⚪'} ${NAME[m.color]} <b>${m.move}</b> · <span class="loss">mất ${m.loss} điểm</span>
         · thắng ${pct(m.winrate_before)} → ${pct(m.winrate_after)} · nên đi <b>${showHints ? m.best || '—' : '🙈'}</b>${showHints && m.intent ? ' <span class="muted">(cùng mục đích, cùng khu vực với nước đã đi)</span>' : ''}${showHints && m.kata_best && m.kata_best !== m.best ? ` <span class="muted">· KataGo: ${m.kata_best}${m.teach_loss ? `, hơn ${m.teach_loss} điểm` : ''}</span>` : ''}
+        ${m.repeats?.length ? `<div class="muted" style="font-size:12px">Bỏ lỡ cùng điểm này cả ở nước ${m.repeats.join(', ')}</div>` : ''}
         ${m.typical ? `<div class="typical">⚠ Lỗi hay gặp ở trình độ ${m.level}: người mạnh hơn ít khi đi vậy</div>` : ''}</div>
       <div class="line">${showHints ? `Biến tốt nhất: ${m.line.slice(0, WINDOW).map((mv, k) => `${k + 1}.${mv}`).join(' ')}${m.line.length > WINDOW ? ` … (đã tính ${m.line.length} nước)` : ''}` : 'Biến tốt nhất đang ẩn: tự tìm nước tốt hơn, bấm 👁 dưới bàn cờ để xem.'}</div>
     </li>`).join('') || (r?.status === 'done' ? '<li class="muted">Không có lỗi đáng kể</li>' : '');

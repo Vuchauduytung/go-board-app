@@ -294,7 +294,15 @@ def _finish(game, review):
                           'kata_best': d['best'], 'teach_loss': d.get('teach_loss'), 'intent': d.get('intent'),
                           'typical': d.get('typical'), 'level': d.get('level'), 'kind': d.get('kind', 'dai-cuc')})
         rank = lambda m: m['loss'] * FOCUS[m['kind']] * (TYPICAL if m['typical'] else 1)
-        review['mistakes'][who] = sorted(found, key=lambda m: -rank(m))[:MISTAKES]
+        kept = {}   # the same move to play, missed move after move: one mistake, its repeats listed with it
+        for m in sorted(found, key=lambda m: -rank(m)):
+            if m['best'] in kept:
+                kept[m['best']].setdefault('repeats', []).append(m['number'])
+            elif len(kept) < MISTAKES:
+                kept[m['best']] = m
+        for m in kept.values():
+            m.get('repeats', []).sort()
+        review['mistakes'][who] = list(kept.values())
     review.update(status='done', phase='done', finished_at=time.time())
 
 

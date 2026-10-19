@@ -77,8 +77,13 @@ def from_review(game, review, sides, by):
         if who in sides and d.get('loss', 0) >= MIN_LOSS and d.get('best') and d['best'] != 'pass':
             board, _, ko = coach.final_position(game['base'], game['moves'][0][0], game['moves'][:i])
             found.append((d['loss'] * FOCUS[classify(board, who, d['best'], i + 1)], i, d, board, ko))
-    out = []
-    for _, i, d, board, ko in sorted(found, key=lambda x: (-x[0], x[1]))[:PER_GAME]:
+    out, taken = [], set()
+    for _, i, d, board, ko in sorted(found, key=lambda x: (-x[0], x[1])):
+        if len(out) >= PER_GAME:
+            break
+        if d['best'] in taken:   # the same point left unplayed move after move: one exercise
+            continue
+        taken.add(d['best'])
         who = game['moves'][i][0]
         m = {'number': i + 1, 'move': game['moves'][i][1], 'loss': round(d['loss'], 1), 'best': d['best'],
              'line': d.get('line')}

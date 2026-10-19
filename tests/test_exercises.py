@@ -74,3 +74,17 @@ def test_exercises_favour_life_and_death_and_the_review_the_opening(monkeypatch)
     review._finish(game, r)
     assert [m['number'] for m in r['mistakes']['W']] == [2, 4] and r['mistakes']['W'][0]['kind'] == 'khai-cuoc'
     assert [m['number'] for m in r['mistakes']['B']] == [5, 3]   # fights still listed, by points lost
+
+
+def test_one_exercise_for_a_point_missed_move_after_move():
+    moves = [['B', 'E5'], ['W', 'C3'], ['B', 'G7'], ['W', 'C7'], ['B', 'G3'], ['W', 'A1'], ['B', 'J9'], ['W', 'A9']]
+    game = review.game_from_moves([[0] * 9 for _ in range(9)], moves, 7.5, 'me', 'AI 1d')
+    deep = {'2': {'loss': 3.0, 'best': 'D6'}, '4': {'loss': 2.8, 'best': 'D6'}, '6': {'loss': 2.5, 'best': 'D6'},
+            '0': {'loss': 2.2, 'best': 'C5'}}
+    got = [(e['number'], e['answers'][0]) for e in exercises.from_review(game, {'deep': deep}, ['B'], 'me')]
+    assert got == [(3, 'D6'), (1, 'C5')]
+    r = {'positions': {str(i): [0.5, 0, 'A1', 0, 0] for i in range(9)}, 'mistakes': {},
+         'deep': {k: {**v, 'line': [], 'kind': 'song-chet'} for k, v in deep.items()}}
+    review._finish(game, r)
+    (a, b) = r['mistakes']['B']
+    assert a['number'] == 3 and a['repeats'] == [5, 7] and b['number'] == 1 and 'repeats' not in b
