@@ -227,6 +227,8 @@
   .varprev svg { width: 100%; max-width: 360px; display: block; margin: 6px auto; border-radius: 6px; }
   .varprev .pv { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
   .varprev .varerr { font-size: 13px; color: var(--err); margin: 4px 0 6px; }
+  #opening a.pt { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+  #opening a.pt.on { color: var(--err); }
   .msg a.pt { color: inherit; font-weight: 600; text-decoration: underline dotted; text-underline-offset: 2px; }
   .msg a.pt.on { color: var(--err); }
   .msg .say { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
@@ -1457,18 +1459,23 @@ function showJoseki(jr) {
   $('jrRun').hidden = jr?.status === 'done' || !!josekiRunning;
   $('jrRun').textContent = jr && jr.done ? '▶ Tiếp tục review định thức' : '▶ Review định thức';
   const dot = c => c === 'B' ? '⚫' : '⚪';
+  // points link to the big board: a move played (data-jp="played"), the move to play instead ("mark"), a move of the
+  // proposed joseki ("line": the joseki played up to it)
+  const pl = (n, mv) => `<a href="#" class="pt" data-jp="played" data-n="${n}" data-pt="${mv}">${mv}</a>`;
+  const mk = (n, mv) => `<a href="#" class="pt" data-jp="mark" data-n="${n}" data-pt="${mv}">${mv}</a>`;
+  const ln = (k, mv) => mv === 'tenuki' ? 'đi chỗ khác' : `<a href="#" class="pt" data-jp="line" data-k="${k}" data-pt="${mv}">${mv}</a>`;
   const op = jr?.status === 'done' ? (jr.results || []) : [];
   $('opening').innerHTML = op.map((o, i) => `
     <li data-o="${i}">
-      ${o.kept ? `<div><b>Góc ${o.corner}</b> · nước ${o.left} ${dot(o.left_color)}<b>${o.left_move}</b>: ngoài cây định thức nhưng <b>chơi được</b>
+      ${o.kept ? `<div><b>Góc ${o.corner}</b> · nước ${o.left} ${dot(o.left_color)}<b>${pl(o.left, o.left_move)}</b>: ngoài cây định thức nhưng <b>chơi được</b>
         <span class="muted">(mất ${o.left_loss} điểm) · giữ cách đi của bạn</span></div>
-      ${o.number ? `<div class="line">Nước sai sau đó: nước ${o.number} ${dot(o.color)}${o.move} <span class="loss">mất ${o.loss} điểm</span>${o.fix && showHints ? ` · nên đi <b>${o.fix}</b>` : ''}</div>` : ''}`
-      : `<div><b>Góc ${o.corner}</b> · nước ${o.left}: nên đi ${o.tenuki || !o.joseki.length ? `chỗ khác (tenuki)` : `${dot(o.joseki[0][0])}<b>${o.joseki[0][1]}</b>`}
-        <span class="muted">(đã đi ${dot(o.left_color)}${o.left_move})</span>
+      ${o.number ? `<div class="line">Nước sai sau đó: nước ${o.number} ${dot(o.color)}${pl(o.number, o.move)} <span class="loss">mất ${o.loss} điểm</span>${o.fix && showHints ? ` · nên đi <b>${mk(o.number, o.fix)}</b>` : ''}</div>` : ''}`
+      : `<div><b>Góc ${o.corner}</b> · nước ${o.left}: nên đi ${o.tenuki || !o.joseki.length ? `chỗ khác (tenuki)` : `${dot(o.joseki[0][0])}<b>${ln(1, o.joseki[0][1])}</b>`}
+        <span class="muted">(đã đi ${dot(o.left_color)}${pl(o.left, o.left_move)})</span>
         ${o.left_loss == null ? '' : `<span class="loss">mất ${o.left_loss} điểm</span>`}</div>
-      ${o.number && o.number !== o.left ? `<div class="line">Nước sai sau đó: nước ${o.number} ${dot(o.color)}${o.move} <span class="loss">mất ${o.loss} điểm</span></div>` : ''}`}
+      ${o.number && o.number !== o.left ? `<div class="line">Nước sai sau đó: nước ${o.number} ${dot(o.color)}${pl(o.number, o.move)} <span class="loss">mất ${o.loss} điểm</span></div>` : ''}`}
       ${o.explain?.moves?.length ? `<div class="acts"><button class="src" type="button" data-explain="${i}">📖 ${o.kept ? 'Ý nghĩa các nước ở góc này' : 'Giải thích định thức'}: mục đích, mỗi bên được gì, điểm yếu</button></div>` : ''}
-      ${o.tenuki || !o.joseki.length ? '' : `<div class="line">Đi hết định thức: ${o.joseki.map(([c, mv], k) => `${k + 1}.${dot(c)}${mv === 'tenuki' ? 'đi chỗ khác' : mv}`).join(' ')}${o.ends ? ' → góc xong, đi chỗ khác' : ' …'}</div>`}
+      ${o.tenuki || !o.joseki.length ? '' : `<div class="line">Đi hết định thức: ${o.joseki.map(([c, mv], k) => `${k + 1}.${dot(c)}${ln(k + 1, mv)}`).join(' ')}${o.ends ? ' → góc xong, đi chỗ khác' : ' …'}</div>`}
     </li>`).join('') || (jr?.status === 'done' ? '<li class="muted">Các góc đều đi đúng định thức (hoặc rời bằng tenuki), không có gì để so.</li>' : '');
   requestAnimationFrame(() => fitThree($('opening')));
 }
@@ -1518,12 +1525,36 @@ $('opening').addEventListener('click', e => {
   const li = e.target.closest('li[data-o]');
   if (!li) return;
   if (e.target.closest('[data-explain], .note')) return;
+  const a = e.target.closest('a[data-jp]');
+  if (!a) { openCorner(li); return; }
+  e.preventDefault();
+  const o = josekiData.results[+li.dataset.o], n = +a.dataset.n, mv = a.dataset.pt, rc = pointRC(mv);
+  document.querySelectorAll('#opening li').forEach(x => x.classList.toggle('on', x === li));
+  document.querySelectorAll('#opening a.pt').forEach(x => x.classList.toggle('on', x === a));
+  if (a.dataset.jp === 'line') {   // the proposed joseki on the board, played up to this move
+    openCorner(li, true);
+    const k = +a.dataset.k;
+    if (k > 1 && kataLine) playLineTo(k - 2);
+    setStatus('info', `Định thức đề xuất ở góc ${o.corner}: số 1 viền xanh là nước ${k}, ${mv} · ▶ để đi tiếp, ◀ để lùi.`);
+    return;
+  }
+  const after = a.dataset.jp === 'played';   // the move played: the position after it; the move to play: before
+  gotoGameMove(after ? n : n - 1);
+  if (rc) coachMarks = [{ row: rc[0], col: rc[1], loss: after ? 9 : 0 }];
+  render();
+  setStatus('info', after ? `Nước ${n}: ${NAME[game.moves[n - 1][0]]} đã đi ${mv} (ô đỏ).`
+    : `Thế cờ trước nước ${n}: nên đi ${mv} (ô xanh) thay cho ${game.moves[n - 1][1]}.`);
+  $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+// A corner of the joseki review on the board: where it left the joseki, with the joseki proposed (or the costly move
+// when the player's joseki is kept); quiet: no status (the caller says what is shown)
+function openCorner(li, quiet = false) {
   const o = josekiData.results[+li.dataset.o], who = o.left_color, mv = o.left_move;
   if (o.kept) {   // the player's joseki is kept: the position before the costly move, if any
     gotoGameMove((o.number || o.left) - 1);
     document.querySelectorAll('#opening li').forEach(x => x.classList.toggle('on', x === li));
     render();
-    setStatus('info', o.number ? `Thế cờ trước nước ${o.number}: ${NAME[o.color]} đã đi ${o.move} (mất ${o.loss} điểm)${o.fix && showHints ? `, nên đi ${o.fix}` : ''}.`
+    if (!quiet) setStatus('info', o.number ? `Thế cờ trước nước ${o.number}: ${NAME[o.color]} đã đi ${o.move} (mất ${o.loss} điểm)${o.fix && showHints ? `, nên đi ${o.fix}` : ''}.`
       : `Thế cờ trước nước ${o.left}: ${mv} ngoài cây định thức nhưng chơi được, giữ định thức của bạn.`);
     $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
@@ -1537,11 +1568,11 @@ $('opening').addEventListener('click', e => {
                  engine: 'cpu', ended: !!o.ends };
   }
   render();
-  setStatus('info', o.tenuki || !o.joseki.length ? `Thế cờ trước nước ${at}: góc ${o.corner} đã xong định thức, ${NAME[who]} nên đi chỗ khác thay vì ${mv}.`
+  if (!quiet) setStatus('info', o.tenuki || !o.joseki.length ? `Thế cờ trước nước ${at}: góc ${o.corner} đã xong định thức, ${NAME[who]} nên đi chỗ khác thay vì ${mv}.`
     : `Thế cờ trước nước ${at}: nên đi ${o.joseki[0][1]} thay vì ${mv} · định thức ở góc ${o.corner} là các số viền xanh (đi hết ${o.joseki.length} nước, bỏ lượt = đi chỗ khác)`
       + (o.number && at !== o.number ? ` (nước sai sau đó: nước ${o.number})` : '') + ' · chạm số hoặc ▶ để đi theo.');
   $('board').scrollIntoView({ behavior: 'smooth', block: 'center' });
-});
+}
 
 // The browser drives the review: one request = ~20 s of KataGo work, progress is saved in the session
 async function runReview() {
