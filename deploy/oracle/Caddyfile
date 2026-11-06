@@ -7,6 +7,11 @@
 	handle /telegram/webhook {
 		reverse_proxy app:8000
 	}
+	# the user's other Telegram bot (@vcdtung_bot, repo telegram-bot, its own compose on this VM): its webhook and
+	# health check, without the prefix; it checks the webhook's secret token itself
+	handle_path /vcdtung-bot/* {
+		reverse_proxy vcdtung-bot:8080
+	}
 	handle {
 		reverse_proxy oauth2-proxy:4180 {
 			# the sign-in headers come from oauth2-proxy only, never from the browser
